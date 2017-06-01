@@ -433,6 +433,11 @@ class DivisionSchemeTest(BaseDividedDiscussionTest, BaseDiscussionMixin):
             "This post is visible only to {}.".format("Audit")
         )
 
+        # Go back to the instructor dashboard.
+        self.instructor_dashboard_page.visit()
+        self.instructor_dashboard_page.select_discussion_management()
+        self.discussion_management_page.wait_for_page()
+
         # Disable dividing discussions and verify that the post now shows as visible to everyone.
         self.discussion_management_page.select_division_scheme(self.discussion_management_page.ENROLLMENT_TRACK_SCHEME)
         self.verify_save_confirmation_message(self.scheme_key)
