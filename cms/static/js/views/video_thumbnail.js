@@ -282,8 +282,7 @@ define(
 
                 if (!_.contains(self.getVideoImageSupportedFileFormats().machine, fileType)) {
                     errorMessage = gettext(
-                        'The selected image contains unsupported image file type. ' +
-                        'Supported file formats are {supportedFileFormats}.'
+                        'This image file type is not supported. Supported file types are {supportedFileFormats}.'
                     )
                     .replace('{supportedFileFormats}', self.getVideoImageSupportedFileFormats().humanize);
                 } else if (imageFile.size > self.getVideoImageMaxSize().machine) {
@@ -308,7 +307,7 @@ define(
 
                 this.action = 'error';
                 this.setActionInfo(this.action, true);
-                this.readMessages([gettext('Video image upload failed'), errorText]);
+                this.readMessages([gettext('Could not upload the video image file'), errorText]);
 
                 // Add css classes so as to distinguish.
                 $parentRowEl.addClass('has-thumbnail-error thumbnail-error');

@@ -201,7 +201,7 @@ define(
                     failureData = {
                         jqXHR: {
                             responseText: JSON.stringify({
-                                error: 'The selected image contains unsupported image file type.'
+                                error: 'This image file type is not supported.'
                             })
                         }
                     };
@@ -216,7 +216,7 @@ define(
                 expect(videoThumbnailView.readMessages).toHaveBeenCalledWith(['Video image upload completed']);
                 videoThumbnailView.imageUploadFailed({}, failureData);
                 expect(videoThumbnailView.readMessages).toHaveBeenCalledWith(
-                    ['Video image upload failed', 'The selected image contains unsupported image file type.']
+                    ['Could not upload the video image file', 'This image file type is not supported.']
                 );
             });
 
@@ -311,7 +311,7 @@ define(
                     .fileupload('add', {files: [createFakeImageFile(VIDEO_IMAGE_MIN_BYTES, 'mov/mp4')]});
 
 
-                errorMessage = 'The selected image contains unsupported image file type. Supported file formats are ' +
+                errorMessage = 'This image file type is not supported. Supported file types are ' +
                     videoThumbnailView.getVideoImageSupportedFileFormats().humanize + '.';
                 // Verify error message
                 $thumbnailErrorEl = $videoListEl.find('.thumbnail-error-wrapper');
