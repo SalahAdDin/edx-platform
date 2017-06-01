@@ -251,25 +251,13 @@ class ProgramProgressMeter(object):
         Returns:
             bool, indicating whether the course is complete.
         """
-
-        def reshape(course_run):
-            """
-            Modify the structure of a course run dict to facilitate comparison
-            with course run certificates.
-            """
-            return {
-                'course_run_id': course_run['key'],
-                # A course run's type is assumed to indicate which mode must be
-                # completed in order for the run to count towards program completion.
-                # This supports the same flexible program construction allowed by the
-                # old programs service (e.g., completion of an old honor-only run may
-                # count towards completion of a course in a program). This may change
-                # in the future to make use of the more rigid set of "applicable seat
-                # types" associated with each program type in the catalog.
-                'type': course_run['type'],
-            }
-
-        return any(reshape(course_run) in self.completed_course_runs for course_run in course['course_runs'])
+        for course_run in course['course_runs']:
+            if {'course_run_id': course_run['key'], 'type': course_run['type']} in self.completed_course_runs:
+                return True
+            elif course_run['type'] == "credit" \
+                    and {'course_run_id': course_run['key'], 'type': "verified"} in self.completed_course_runs:
+                return True
+        return False
 
     @cached_property
     def completed_course_runs(self):
