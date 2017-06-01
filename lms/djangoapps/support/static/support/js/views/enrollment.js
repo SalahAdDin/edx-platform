@@ -39,7 +39,7 @@
                     user: user,
                     enrollments: this.enrollments,
                     formatDate: function(date) {
-                       return date ? moment.utc(date).format('lll z') : 'N/A' ;
+                        return date ? moment.utc(date).format('lll z') : 'N/A';
                     }
                 }));
 
