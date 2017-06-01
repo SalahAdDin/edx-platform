@@ -1,7 +1,7 @@
 define(
     ['jquery', 'underscore', 'backbone', 'edx-ui-toolkit/js/utils/spec-helpers/ajax-helpers',
-        'js/views/video_thumbnail', 'js/views/previous_video_upload', 'common/js/spec_helpers/template_helpers'],
-    function($, _, Backbone, AjaxHelpers, VideoThumbnailView, PreviousVideoUploadView, TemplateHelpers) {
+        'js/views/video_thumbnail', 'js/views/previous_video_upload_list', 'common/js/spec_helpers/template_helpers'],
+    function($, _, Backbone, AjaxHelpers, VideoThumbnailView, PreviousVideoUploadListView, TemplateHelpers) {
         'use strict';
         describe('VideoThumbnailView', function() {
             var IMAGE_UPLOAD_URL = '/videos/upload/image',
@@ -18,65 +18,52 @@ define(
                     '.jpg': 'image/jpeg',
                     '.jpeg': 'image/jpeg'
                 },
+                videoImageSettings = {
+                    max_size: VIDEO_IMAGE_MAX_BYTES,
+                    min_size: VIDEO_IMAGE_MIN_BYTES,
+                    max_width: VIDEO_IMAGE_MAX_WIDTH,
+                    max_height: VIDEO_IMAGE_MAX_HEIGHT,
+                    supported_file_formats: VIDEO_IMAGE_SUPPORTED_FILE_FORMATS
+                },
+                defaultData = {
+                    client_video_id: 'foo.mp4',
+                    duration: 42,
+                    created: '2014-11-25T23:13:05',
+                    edx_video_id: 'dummy_id',
+                    status: 'uploading',
+                    thumbnail_url: null
+                },
                 videoThumbnailView,
-                createVideoView,
+                createVideoListView,
                 createFakeImageFile,
                 verifyStateInfo,
                 render = function(modelData) {
-                    var defaultData = {
-                        client_video_id: 'foo.mp4',
-                        duration: 42,
-                        created: '2014-11-25T23:13:05',
-                        edx_video_id: 'dummy_id',
-                        status: 'uploading',
-                        thumbnail_url: null
-                    };
                     videoThumbnailView = new VideoThumbnailView({
                         model: new Backbone.Model($.extend({}, defaultData, modelData)),
                         imageUploadURL: IMAGE_UPLOAD_URL,
-                        videoImageSettings: {
-                            max_size: VIDEO_IMAGE_MAX_BYTES,
-                            min_size: VIDEO_IMAGE_MIN_BYTES,
-                            max_width: VIDEO_IMAGE_MAX_WIDTH,
-                            max_height: VIDEO_IMAGE_MAX_HEIGHT,
-                            supported_file_formats: VIDEO_IMAGE_SUPPORTED_FILE_FORMATS
-                        }
+                        videoImageSettings: videoImageSettings
                     });
                     return videoThumbnailView.render().$el;
                 };
 
 
-            createVideoView = function(modelData) {
-                var defaultData = {
-                        client_video_id: 'foo.mp4',
-                        duration: 42,
-                        created: '2014-11-25T23:13:05',
-                        edx_video_id: 'dummy_id',
-                        status: 'uploading',
-                        thumbnail_url: null
-                    },
-                    previousVideoUploadView = new PreviousVideoUploadView({
-                        model: new Backbone.Model($.extend({}, defaultData, modelData)),
-                        videoHandlerUrl: '/videos/course-v1:org.0+course_0+Run_0',
-                        videoImageSettings: {
-                            max_size: VIDEO_IMAGE_MAX_BYTES,
-                            min_size: VIDEO_IMAGE_MIN_BYTES,
-                            max_width: VIDEO_IMAGE_MAX_WIDTH,
-                            max_height: VIDEO_IMAGE_MAX_HEIGHT,
-                            supported_file_formats: VIDEO_IMAGE_SUPPORTED_FILE_FORMATS
-                        }
-                    });
-                return previousVideoUploadView;
+            createVideoListView = function(numVideos) {
+                var numVideos = numVideos || 1,   // eslint-disable-line no-redeclare
+                    collection = new Backbone.Collection(_.map(_.range(numVideos), function(num, index) {
+                        return new Backbone.Model(_.extend({}, defaultData, {edx_video_id: 'dummy_id_' + index}));
+                    }));
+                return new PreviousVideoUploadListView({
+                    collection: collection,
+                    videoHandlerUrl: '/videos/course-v1:org.0+course_0+Run_0',
+                    videoImageSettings: videoImageSettings
+                });
             };
 
 
             createFakeImageFile = function(size, type) {
                 var size = size || VIDEO_IMAGE_MIN_BYTES,   // eslint-disable-line no-redeclare
                     type = type || 'image/jpeg';    // eslint-disable-line no-redeclare
-                return new Blob(
-                    [Array(size + 1).join('i')],
-                    {type: type}
-                );
+                return new Blob([Array(size + 1).join('i')], {type: type});
             };
 
             verifyStateInfo = function($thumbnail, state, onHover, additionalSRText) {
@@ -96,9 +83,12 @@ define(
                     ).toEqual(additionalSRText);
                 }
 
-                expect($thumbnail.find('.action-icon').html().trim()).toEqual(
-                     videoThumbnailView.actionsInfo[state].icon
-                );
+                if (state !== 'error') {
+                    expect($thumbnail.find('.action-icon').html().trim()).toEqual(
+                         videoThumbnailView.actionsInfo[state].icon
+                    );
+                }
+
                 expect($thumbnail.find('.action-text').html().trim()).toEqual(
                     videoThumbnailView.actionsInfo[state].text
                 );
@@ -114,6 +104,7 @@ define(
             beforeEach(function() {
                 setFixtures('<div id="page-prompt"></div><div id="page-notification"></div>');
                 TemplateHelpers.installTemplate('video-thumbnail');
+                TemplateHelpers.installTemplate('previous-video-upload-list');
             });
 
             it('renders as expected', function() {
@@ -230,9 +221,9 @@ define(
             });
 
             it('should show error message in case of server error', function() {
-                var videoView = createVideoView({}),
-                    $videoEl = videoView.render().$el,
-                    videoThumbnailView = videoView.videoThumbnailView,  // eslint-disable-line no-shadow
+                var videoListView = createVideoListView(),
+                    $videoListEl = videoListView.render().$el,
+                    videoThumbnailView = videoListView.itemViews[0].videoThumbnailView, // eslint-disable-line no-shadow
                     $el = videoThumbnailView.render().$el,
                     requests = AjaxHelpers.requests(this);
 
@@ -244,15 +235,15 @@ define(
                 AjaxHelpers.respondWithError(requests);
 
                 // Verify error message is present
-                expect($videoEl.find('.thumbnail-error-wrapper .thumbnail-error')).toExist();
+                expect($videoListEl.find('.thumbnail-error-wrapper')).toExist();
             });
 
             it('should show error message when file is smaller than minimum size', function() {
                 var errorMessage,
                     $thumbnailErrorEl,
-                    videoView = createVideoView({}),
-                    $videoEl = videoView.render().$el,
-                    videoThumbnailView = videoView.videoThumbnailView,  // eslint-disable-line no-shadow
+                    videoListView = createVideoListView(),
+                    $videoListEl = videoListView.render().$el,
+                    videoThumbnailView = videoListView.itemViews[0].videoThumbnailView, // eslint-disable-line no-shadow
                     $el = videoThumbnailView.render().$el;
 
                 videoThumbnailView.chooseFile();
@@ -264,16 +255,16 @@ define(
                 errorMessage = 'The selected image must be larger than ' +
                     videoThumbnailView.getVideoImageMinSize().humanize + '.';
                 // Verify error message
-                $thumbnailErrorEl = $videoEl.find('.thumbnail-error-wrapper .thumbnail-error');
+                $thumbnailErrorEl = $videoListEl.find('.thumbnail-error-wrapper');
                 expect($thumbnailErrorEl.find('.action-text').html().trim()).toEqual(errorMessage);
             });
 
             it('should show error message when file is larger than maximum size', function() {
                 var errorMessage,
                     $thumbnailErrorEl,
-                    videoView = createVideoView({}),
-                    $videoEl = videoView.render().$el,
-                    videoThumbnailView = videoView.videoThumbnailView,  // eslint-disable-line no-shadow
+                    videoListView = createVideoListView(),
+                    $videoListEl = videoListView.render().$el,
+                    videoThumbnailView = videoListView.itemViews[0].videoThumbnailView, // eslint-disable-line no-shadow
                     $el = videoThumbnailView.render().$el;
 
                 videoThumbnailView.chooseFile();
@@ -285,14 +276,14 @@ define(
                 errorMessage = 'The selected image must be smaller than ' +
                     videoThumbnailView.getVideoImageMaxSize().humanize + '.';
                 // Verify error message
-                $thumbnailErrorEl = $videoEl.find('.thumbnail-error-wrapper .thumbnail-error');
+                $thumbnailErrorEl = $videoListEl.find('.thumbnail-error-wrapper');
                 expect($thumbnailErrorEl.find('.action-text').html().trim()).toEqual(errorMessage);
             });
 
             it('should not show error message when file is appropriate size', function() {
-                var videoView = createVideoView({}),
-                    $videoEl = videoView.render().$el,
-                    videoThumbnailView = videoView.videoThumbnailView,  // eslint-disable-line no-shadow
+                var videoListView = createVideoListView(),
+                    $videoListEl = videoListView.render().$el,
+                    videoThumbnailView = videoListView.itemViews[0].videoThumbnailView, // eslint-disable-line no-shadow
                     $el = videoThumbnailView.render().$el;
 
                 videoThumbnailView.chooseFile();
@@ -302,15 +293,15 @@ define(
                     .fileupload('add', {files: [createFakeImageFile(VIDEO_IMAGE_MIN_BYTES)]});
 
                 // Verify error not present.
-                expect($videoEl.find('.thumbnail-error-wrapper .thumbnail-error')).not.toExist();
+                expect($videoListEl.find('.thumbnail-error-wrapper')).not.toExist();
             });
 
             it('should show error message when file has unsupported content type', function() {
                 var errorMessage,
                     $thumbnailErrorEl,
-                    videoView = createVideoView({}),
-                    $videoEl = videoView.render().$el,
-                    videoThumbnailView = videoView.videoThumbnailView,  // eslint-disable-line no-shadow
+                    videoListView = createVideoListView(),
+                    $videoListEl = videoListView.render().$el,
+                    videoThumbnailView = videoListView.itemViews[0].videoThumbnailView, // eslint-disable-line no-shadow
                     $el = videoThumbnailView.render().$el;
 
                 videoThumbnailView.chooseFile();
@@ -323,14 +314,14 @@ define(
                 errorMessage = 'The selected image contains unsupported image file type. Supported file formats are ' +
                     videoThumbnailView.getVideoImageSupportedFileFormats().humanize + '.';
                 // Verify error message
-                $thumbnailErrorEl = $videoEl.find('.thumbnail-error-wrapper .thumbnail-error');
+                $thumbnailErrorEl = $videoListEl.find('.thumbnail-error-wrapper');
                 expect($thumbnailErrorEl.find('.action-text').html().trim()).toEqual(errorMessage);
             });
 
             it('should not show error message when file has supported content type', function() {
-                var videoView = createVideoView({}),
-                    $videoEl = videoView.render().$el,
-                    videoThumbnailView = videoView.videoThumbnailView,  // eslint-disable-line no-shadow
+                var videoListView = createVideoListView(),
+                    $videoListEl = videoListView.render().$el,
+                    videoThumbnailView = videoListView.itemViews[0].videoThumbnailView, // eslint-disable-line no-shadow
                     $el = videoThumbnailView.render().$el;
 
                 videoThumbnailView.chooseFile();
@@ -339,8 +330,8 @@ define(
                 $el.find('.upload-image-input')
                     .fileupload('add', {files: [createFakeImageFile(VIDEO_IMAGE_MIN_BYTES)]});
 
-                // Verify error message not present
-                expect($videoEl.find('.thumbnail-error-wrapper .thumbnail-error')).not.toExist();
+                // Verify error message is not present
+                expect($videoListEl.find('.thumbnail-error-wrapper')).not.toExist();
             });
         });
     }

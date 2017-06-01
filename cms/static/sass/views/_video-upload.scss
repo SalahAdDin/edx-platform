@@ -169,27 +169,24 @@
     }
   }
 
+  .blue-l5 {
+    background: $blue-l5 !important;
+  }
+
   .thumbnail-error-wrapper {
     padding: 0 !important;
     border: none !important;
-    table {
-      tbody {
-        background: transparent !important;
-        tr {
-          border: none !important;
-          background: transparent !important;
-          &:hover {
-            background: transparent !important;
-          }
-        }
+
+    .thumbnail-error-text {
+      color: $red;
+      .action-text {
+        margin-left: 5px;
       }
     }
-    &:hover {
-      background: $blue-l5 !important;
-    }
-    .thumbnail-error {
-      color: $red;
-    }
+  }
+
+  tr.has-thumbnail-error {
+    border: none !important;
   }
 
   $thumbnail-width: ($baseline*7.5);

@@ -19,7 +19,7 @@ define(
 
             initialize: function(options) {
                 this.template = HtmlUtils.template(VideoThumbnailTemplate);
-                this.errorTemplate = HtmlUtils.template(VideoThumbnailErrorTemplate);
+                this.thumbnailErrorTemplate = HtmlUtils.template(VideoThumbnailErrorTemplate);
                 this.imageUploadURL = options.imageUploadURL;
                 this.defaultVideoImageURL = options.defaultVideoImageURL;
                 this.action = this.model.get('course_video_image_url') ? 'edit' : 'upload';
@@ -34,7 +34,7 @@ define(
                         text: gettext('Edit Thumbnail')
                     },
                     error: {
-                        icon: '<span class="icon fa fa-exclamation-triangle" aria-hidden="true"></span>',
+                        icon: '',
                         text: gettext('Image upload failed')
                     },
                     progress: {
@@ -228,22 +228,6 @@ define(
                 this.showErrorMessage(errorText);
             },
 
-            showErrorMessage: function(errorText) {
-                var orignalParentHTML;
-                this.action = 'error';
-                this.setActionInfo(this.action, true);
-                this.readMessages([gettext('Video image upload failed'), errorText]);
-                orignalParentHTML = this.$el.parent().html();
-                HtmlUtils.setHtml(
-                    this.$el.parent(),
-                    this.errorTemplate({
-                        icon: this.actionsInfo.error.icon,
-                        error: errorText,
-                        orignalParentHTML: orignalParentHTML
-                    })
-                );
-            },
-
             showUploadInProgressMessage: function() {
                 this.action = 'progress';
                 this.setActionInfo(this.action, true);
@@ -255,7 +239,11 @@ define(
                 } else if (this.action === 'edit') {
                     this.setActionInfo(this.action, true);
                 }
-                this.$('.thumbnail-wrapper').addClass('focused');
+
+                // When we had error, focused effect was not wearing off after hover out.
+                if (!$(this.$el.parent()).hasClass('has-thumbnail-error')) {
+                    this.$('.thumbnail-wrapper').addClass('focused');
+                }
             },
 
             hideHoverState: function() {
@@ -268,10 +256,17 @@ define(
 
             setActionInfo: function(action, showText, additionalSRText) {
                 this.$('.thumbnail-action').toggle(showText);
-                HtmlUtils.setHtml(
-                    this.$('.thumbnail-action .action-icon'),
-                    HtmlUtils.HTML(this.actionsInfo[action].icon)
-                );
+                if (action === 'error') {
+                    HtmlUtils.setHtml(
+                        this.$('.thumbnail-action .action-icon'),
+                        HtmlUtils.HTML('')
+                    );
+                } else {
+                    HtmlUtils.setHtml(
+                        this.$('.thumbnail-action .action-icon'),
+                        HtmlUtils.HTML(this.actionsInfo[action].icon)
+                    );
+                }
                 HtmlUtils.setHtml(
                     this.$('.thumbnail-action .action-text'),
                     HtmlUtils.HTML(this.actionsInfo[action].text)
@@ -304,6 +299,81 @@ define(
                 }
 
                 return errorMessage;
+            },
+
+            showErrorMessage: function(errorText) {
+                var videoId = this.model.get('edx_video_id'),
+                    $parentRowEl = $(this.$el.parent()),
+                    $thumbnailWrapperEl = $('.thumbnail-error-wrapper[data-video-id="' + videoId + '"]');
+
+                this.action = 'error';
+                this.setActionInfo(this.action, true);
+                this.readMessages([gettext('Video image upload failed'), errorText]);
+
+                // Add css classes so as to distinguish.
+                $parentRowEl.addClass('has-thumbnail-error thumbnail-error');
+
+                // We need to update data attr in DOM too so as to find our element on hover.
+                $parentRowEl.attr('data-video-id', videoId);
+
+                if ($thumbnailWrapperEl.length) {
+                    $thumbnailWrapperEl.remove();
+                }
+
+                $parentRowEl.before(    // safe-lint: disable=javascript-jquery-insertion
+                   HtmlUtils.ensureHtml(
+                       this.thumbnailErrorTemplate({videoId: videoId, errorText: errorText})
+                   ).toString()
+                );
+
+                // We need to treat error and error throwing row as one.
+                // Refresh table rows to reflect error row.
+                this.refreshVideoTableRows();
+
+                // We also need to treat error and error throwing row as one on hover.
+                $('.thumbnail-error[data-video-id="' + videoId + '"]').hover(function() {
+                    $('.thumbnail-error[data-video-id="' + videoId + '"]').toggleClass('blue-l5');
+                });
+            },
+
+            /*
+            Refresh video table rows.
+
+            This method treats error and error throwing rows as one, for that to achieve we need to reset
+            table row even odd colors.
+            */
+            refreshVideoTableRows: function() {
+                var savedColor, // one color for error row and error throwing row so as to treat them one.
+                    oddColor = 'transparent',
+                    evenColor = '#f9f9f9';
+
+                $('.view-video-uploads .assets-table .js-table-body tr').each(function(index) {
+                    var currentColor;
+
+                    if (index % 2 === 0) {
+                        currentColor = evenColor;
+                    } else {
+                        currentColor = oddColor;
+                    }
+
+                    if ($(this).hasClass('thumbnail-error-wrapper')) {
+                        savedColor = currentColor;
+                    }
+
+                    if ($(this).hasClass('has-thumbnail-error')) {
+                        $(this).css('background-color', savedColor);
+                        if (currentColor === oddColor) {
+                            oddColor = evenColor;
+                            evenColor = currentColor;
+                        } else {
+                            evenColor = oddColor;
+                            oddColor = currentColor;
+                        }
+                        savedColor = '';
+                    } else {
+                        $(this).css('background-color', currentColor);
+                    }
+                });
             },
 
             readMessages: function(messages) {
