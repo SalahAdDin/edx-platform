@@ -14,7 +14,7 @@ import mock
 from ccx_keys.locator import CCXLocator
 from django.conf import settings
 from django.contrib.auth.models import User
-from django.core.urlresolvers import Resolver404, resolve, reverse
+from django.urls import Resolver404, resolve, reverse
 from django.utils.timezone import now
 from nose.plugins.attrib import attr
 from oauth2_provider import models as dot_models
@@ -161,7 +161,7 @@ class CcxRestApiTest(CcxTestCase, APITestCase):
         self.assertEqual(expected_field_errors, resp_dict_error)
 
 
-@attr(shard=1)
+@attr(shard=9)
 @ddt.ddt
 class CcxListTest(CcxRestApiTest):
     """
@@ -872,7 +872,7 @@ class CcxListTest(CcxRestApiTest):
             self.assertEqual(course_user, ccx_user)
 
 
-@attr(shard=1)
+@attr(shard=9)
 @ddt.ddt
 class CcxDetailTest(CcxRestApiTest):
     """

@@ -15,7 +15,7 @@ from completion.models import BlockCompletion
 from completion import waffle as completion_waffle
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.http import Http404, HttpResponse
 from django.test.client import RequestFactory
 from django.test.utils import override_settings
@@ -241,7 +241,6 @@ class ModuleRenderTestCase(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
         # note if the URL mapping changes then this assertion will break
         self.assertIn('/courses/' + text_type(self.course_key) + '/jump_to_id/vertical_test', html)
 
-    @pytest.mark.django111_expected_failure
     def test_xqueue_callback_success(self):
         """
         Test for happy-path xqueue_callback

@@ -33,7 +33,6 @@ import imp
 import sys
 import os
 
-import django
 from path import Path as path
 from django.utils.translation import ugettext_lazy as _
 
@@ -58,10 +57,6 @@ PLATFORM_FACEBOOK_ACCOUNT = "http://www.facebook.com/YourPlatformFacebookAccount
 PLATFORM_TWITTER_ACCOUNT = "@YourPlatformTwitterAccount"
 
 ENABLE_JASMINE = False
-
-DISCUSSION_SETTINGS = {
-    'MAX_COMMENT_DEPTH': 2,
-}
 
 LMS_ROOT_URL = "http://localhost:8000"
 LMS_INTERNAL_ROOT_URL = LMS_ROOT_URL
@@ -137,6 +132,9 @@ FEATURES = {
     # Can be turned off if course lists need to be hidden. Effects views and templates.
     'COURSES_ARE_BROWSABLE': True,
 
+    # Set to hide the courses list on the Learner Dashboard if they are not enrolled in any courses yet.
+    'HIDE_DASHBOARD_COURSES_UNTIL_ACTIVATED': False,
+
     # Enables ability to restrict enrollment in specific courses by the user account login method
     'RESTRICT_ENROLL_BY_REG_METHOD': False,
 
@@ -186,8 +184,11 @@ FEATURES = {
     # Toggle to enable certificates of courses on dashboard
     'ENABLE_VERIFIED_CERTIFICATES': False,
 
-    # for load testing
+    # for acceptance and load testing
     'AUTOMATIC_AUTH_FOR_TESTING': False,
+
+    # Prevent auto auth from creating superusers or modifying existing users
+    'RESTRICT_AUTOMATIC_AUTH': True,
 
     # Toggle the availability of the shopping cart page
     'ENABLE_SHOPPING_CART': False,
@@ -203,6 +204,9 @@ FEATURES = {
 
     # Automatically approve student identity verification attempts
     'AUTOMATIC_VERIFY_STUDENT_IDENTITY_FOR_TESTING': False,
+
+    # Maximum number of rows to include in the csv file for downloading problem responses.
+    'MAX_PROBLEM_RESPONSES_COUNT': 5000,
 
     # whether to use password policy enforcement or not
     'ENFORCE_PASSWORD_POLICY': True,
@@ -376,9 +380,6 @@ FEATURES = {
     # See LEARNER-493
     'ENABLE_ONE_CLICK_PROGRAM_PURCHASE': False,
 
-    # Whether to display account activation notification on dashboard.
-    'DISPLAY_ACCOUNT_ACTIVATION_MESSAGE_ON_SIDEBAR': False,
-
     # Allow users to change their email address.
     'ALLOW_EMAIL_ADDRESS_CHANGE': True,
 
@@ -397,6 +398,12 @@ FEATURES = {
     # Whether to send an email for failed password reset attempts or not. This is mainly useful for notifying users
     # that they don't have an account associated with email addresses they believe they've registered with.
     'ENABLE_PASSWORD_RESET_FAILURE_EMAIL': False,
+
+    # Set this to true to make API docs available at /api-docs/.
+    'ENABLE_API_DOCS': False,
+
+    # Whether to display the account deletion section the account settings page
+    'ENABLE_ACCOUNT_DELETION': True,
 }
 
 # Settings for the course reviews tool template and identification key, set either to None to disable course reviews
@@ -795,6 +802,7 @@ TRACKING_SEGMENTIO_SOURCE_MAP = {
 
 ######################## GOOGLE ANALYTICS ###########################
 GOOGLE_ANALYTICS_ACCOUNT = None
+GOOGLE_SITE_VERIFICATION_ID = None
 GOOGLE_ANALYTICS_LINKEDIN = 'GOOGLE_ANALYTICS_LINKEDIN_DUMMY'
 
 ######################## BRANCH.IO ###########################
@@ -805,7 +813,6 @@ OPTIMIZELY_PROJECT_ID = None
 
 ######################## subdomain specific settings ###########################
 COURSE_LISTINGS = {}
-VIRTUAL_UNIVERSITIES = []
 
 ############# XBlock Configuration ##########
 
@@ -1208,13 +1215,6 @@ CREDIT_NOTIFICATION_CACHE_TIMEOUT = 5 * 60 * 60
 
 ################################# Middleware ###################################
 
-# TODO: Remove Django 1.11 upgrade shim
-# SHIM: Remove birdcage references post-1.11 upgrade as it is only in place to help during that deployment
-if django.VERSION < (1, 9):
-    _csrf_middleware = 'birdcage.v1_11.csrf.CsrfViewMiddleware'
-else:
-    _csrf_middleware = 'django.middleware.csrf.CsrfViewMiddleware'
-
 MIDDLEWARE_CLASSES = [
     'crum.CurrentRequestUserMiddleware',
 
@@ -1238,9 +1238,6 @@ MIDDLEWARE_CLASSES = [
     # Instead of AuthenticationMiddleware, we use a cached backed version
     #'django.contrib.auth.middleware.AuthenticationMiddleware',
     'openedx.core.djangoapps.cache_toolbox.middleware.CacheBackedAuthenticationMiddleware',
-    # Enable SessionAuthenticationMiddleware in order to invalidate
-    # user sessions after a password change.
-    'django.contrib.auth.middleware.SessionAuthenticationMiddleware',
 
     'student.middleware.UserStandingMiddleware',
     'openedx.core.djangoapps.contentserver.middleware.StaticContentServer',
@@ -1256,7 +1253,7 @@ MIDDLEWARE_CLASSES = [
     'corsheaders.middleware.CorsMiddleware',
     'openedx.core.djangoapps.cors_csrf.middleware.CorsCSRFMiddleware',
     'openedx.core.djangoapps.cors_csrf.middleware.CsrfCrossDomainCookieMiddleware',
-    _csrf_middleware,
+    'django.middleware.csrf.CsrfViewMiddleware',
 
     'splash.middleware.SplashMiddleware',
 
@@ -2253,9 +2250,6 @@ INSTALLED_APPS = [
 
     'sorl.thumbnail',
 
-    # Credentials support
-    'openedx.core.djangoapps.credentials',
-
     # edx-milestones service
     'milestones',
 
@@ -2314,6 +2308,9 @@ INSTALLED_APPS = [
 
     # DRF filters
     'django_filters',
+
+    # API Documentation
+    'rest_framework_swagger',
 ]
 
 ######################### CSRF #########################################
@@ -2336,6 +2333,7 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'user': '60/minute',
         'service_user': '120/minute',
+        'registration_validation': '30/minute',
     },
 }
 
@@ -2622,6 +2620,10 @@ FINANCIAL_REPORTS = {
     'CUSTOM_DOMAIN': 'edx-financial-reports.s3.amazonaws.com',
     'ROOT_PATH': '/tmp/edx-s3/financial_reports',
 }
+
+#### Grading policy change-related settings #####
+# Rate limit for regrading tasks that a grading policy change can kick off
+POLICY_CHANGE_TASK_RATE_LIMIT = '300/h'
 
 #### PASSWORD POLICY SETTINGS #####
 PASSWORD_MIN_LENGTH = 8
@@ -3413,6 +3415,42 @@ RETIRED_EMAIL_FMT = lambda settings: settings.RETIRED_EMAIL_PREFIX + '{}@' + set
 derived('RETIRED_USERNAME_FMT', 'RETIRED_EMAIL_FMT')
 RETIRED_USER_SALTS = ['abc', '123']
 RETIREMENT_SERVICE_WORKER_USERNAME = 'RETIREMENT_SERVICE_USER'
+
+# These states are the default, but are designed to be overridden in configuration.
+RETIREMENT_STATES = [
+    'PENDING',
+
+    'LOCKING_ACCOUNT',
+    'LOCKING_COMPLETE',
+
+    'RETIRING_CREDENTIALS',
+    'CREDENTIALS_COMPLETE',
+
+    'RETIRING_ECOM',
+    'ECOM_COMPLETE',
+
+    'RETIRING_FORUMS',
+    'FORUMS_COMPLETE',
+
+    'RETIRING_EMAIL_LISTS',
+    'EMAIL_LISTS_COMPLETE',
+
+    'RETIRING_ENROLLMENTS',
+    'ENROLLMENTS_COMPLETE',
+
+    'RETIRING_NOTES',
+    'NOTES_COMPLETE',
+
+    'NOTIFYING_PARTNERS',
+    'PARTNERS_NOTIFIED',
+
+    'RETIRING_LMS',
+    'LMS_COMPLETE',
+
+    'ERRORED',
+    'ABORTED',
+    'COMPLETE',
+]
 
 ############### Settings for django-fernet-fields ##################
 FERNET_KEYS = [

@@ -3,7 +3,7 @@ Tests student admin.py
 """
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth.models import User
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.test import TestCase
 from mock import Mock
 
@@ -165,9 +165,18 @@ class AdminUserPageTest(TestCase):
         super(AdminUserPageTest, self).setUp()
         self.admin = UserAdmin(User, AdminSite())
 
-    def test_username_is_readonly(self):
+    def test_username_is_writable_for_user_creation(self):
         """
-        Ensures that the username is readonly to skip Django validation in the `auth_user_change` view.
+        Ensures that the username is not readonly, when admin creates new user.
+        """
+        request = Mock()
+        self.assertNotIn('username', self.admin.get_readonly_fields(request))
+
+    def test_username_is_readonly_for_user(self):
+        """
+        Ensures that the username field is readonly, when admin open user which already exists.
+
+        This hook used for skip Django validation in the `auth_user_change` view.
 
         Changing the username is still possible using the database or from the model directly.
 
@@ -175,4 +184,5 @@ class AdminUserPageTest(TestCase):
         stores the username in a different database.
         """
         request = Mock()
-        self.assertIn('username', self.admin.get_readonly_fields(request))
+        user = Mock()
+        self.assertIn('username', self.admin.get_readonly_fields(request, user))

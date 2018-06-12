@@ -574,34 +574,6 @@ class UnitAccessTest(CourseOutlineTest):
         unit = self.course_outline_page.section_at(0).subsection_at(0).unit_at(0)
         self._set_restriction_on_unrestricted_unit(unit)
 
-    def test_restricted_sections_for_content_group_users_in_lms(self):
-        """
-        Verify that those who are in an content track with access to a restricted unit are able
-        to see that unit in lms, and those who are in an enrollment track without access to a restricted
-        unit are not able to see that unit in lms
-        """
-        self.course_outline_page.visit()
-        self.course_outline_page.expand_all_subsections()
-        unit = self.course_outline_page.section_at(0).subsection_at(0).unit_at(0)
-        unit.toggle_unit_access('Content Groups', [self.content_group_a_id])
-        self.course_outline_page.view_live()
-
-        course_home_page = CourseHomePage(self.browser, self.course_id)
-        course_home_page.visit()
-        course_home_page.resume_course_from_header()
-        self.assertEqual(course_home_page.outline.num_units, 2)
-
-        # Test for a user without additional content available
-        staff_page = StaffCoursewarePage(self.browser, self.course_id)
-        staff_page.set_staff_view_mode('Learner in Test Group B')
-        staff_page.wait_for_page()
-        self.assertEqual(course_home_page.outline.num_units, 1)
-
-        # Test for a user with additional content available
-        staff_page.set_staff_view_mode('Learner in Test Group A')
-        staff_page.wait_for_page()
-        self.assertEqual(course_home_page.outline.num_units, 2)
-
 
 @attr(shard=14)
 class StaffLockTest(CourseOutlineTest):
@@ -832,6 +804,29 @@ class StaffLockTest(CourseOutlineTest):
         subsection = self.course_outline_page.section_at(0).subsection_at(0)
         subsection.unit_at(0).set_staff_lock(True)
         self.assertFalse(subsection.has_staff_lock_warning)
+
+    def test_locked_sections_do_not_appear_in_lms(self):
+        """
+        Scenario: A locked section is not visible to students in the LMS
+            Given I have a course with two sections
+            When I enable explicit staff lock on one section
+            And I click the View Live button to switch to staff view
+            And I visit the course home with the outline
+            Then I see two sections in the outline
+            And when I switch the view mode to student view
+            Then I see one section in the outline
+        """
+        self.course_outline_page.visit()
+        self.course_outline_page.add_section_from_top_button()
+        self.course_outline_page.section_at(1).set_staff_lock(True)
+        self.course_outline_page.view_live()
+
+        course_home_page = CourseHomePage(self.browser, self.course_id)
+        course_home_page.visit()
+        course_home_page.wait_for_page()
+        self.assertEqual(course_home_page.outline.num_sections, 2)
+        course_home_page.preview.set_staff_view_mode('Learner')
+        self.assertEqual(course_home_page.outline.num_sections, 1)
 
     def test_toggling_staff_lock_on_section_does_not_publish_draft_units(self):
         """

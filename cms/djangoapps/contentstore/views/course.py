@@ -14,7 +14,7 @@ from ccx_keys.locator import CCXLocator
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.http import Http404, HttpResponse, HttpResponseBadRequest, HttpResponseNotFound
 from django.shortcuts import redirect
 from django.utils.translation import ugettext as _
@@ -25,6 +25,8 @@ from opaque_keys.edx.keys import CourseKey
 from opaque_keys.edx.locator import BlockUsageLocator
 from openedx.core.djangoapps.content.course_overviews.models import CourseOverview
 from openedx.core.djangoapps.waffle_utils import WaffleSwitchNamespace
+from openedx.features.course_experience.waffle import waffle as course_experience_waffle
+from openedx.features.course_experience.waffle import ENABLE_COURSE_ABOUT_SIDEBAR_HTML
 from six import text_type
 
 from contentstore.course_group_config import (
@@ -911,6 +913,7 @@ def rerun_course(user, source_course_key, org, number, run, fields, async=True):
 
     # Clear the fields that must be reset for the rerun
     fields['advertised_start'] = None
+    fields['video_upload_pipeline'] = {}
 
     json_fields = json.dumps(fields, cls=EdxJSONEncoder)
     args = [unicode(source_course_key), unicode(destination_course_key), user.id, json_fields]
@@ -1049,6 +1052,7 @@ def settings_handler(request, course_key_string):
                 'EDITABLE_SHORT_DESCRIPTION',
                 settings.FEATURES.get('EDITABLE_SHORT_DESCRIPTION', True)
             )
+            sidebar_html_enabled = course_experience_waffle().is_enabled(ENABLE_COURSE_ABOUT_SIDEBAR_HTML)
             # self_paced_enabled = SelfPacedConfiguration.current().enabled
 
             settings_context = {
@@ -1061,6 +1065,7 @@ def settings_handler(request, course_key_string):
                 'details_url': reverse_course_url('settings_handler', course_key),
                 'about_page_editable': about_page_editable,
                 'short_description_editable': short_description_editable,
+                'sidebar_html_enabled': sidebar_html_enabled,
                 'upload_asset_url': upload_asset_url,
                 'course_handler_url': reverse_course_url('course_handler', course_key),
                 'language_options': settings.ALL_LANGUAGES,

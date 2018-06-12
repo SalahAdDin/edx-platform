@@ -20,6 +20,7 @@ from fs.path import combine
 from edxval.api import (
     ValCannotCreateError,
     ValVideoNotFoundError,
+    create_video_transcript,
     create_or_update_video_transcript,
     create_profile,
     create_video,
@@ -54,7 +55,7 @@ MODULESTORES = {
     ModuleStoreEnum.Type.split: TEST_DATA_SPLIT_MODULESTORE,
 }
 
-TRANSCRIPT_FILE_SRT_DATA = """
+TRANSCRIPT_FILE_SRT_DATA = u"""
 1
 00:00:14,370 --> 00:00:16,530
 I am overwatch.
@@ -67,7 +68,7 @@ I am overwatch.
 TRANSCRIPT_FILE_SJSON_DATA = """{\n   "start": [10],\n   "end": [100],\n   "text": ["Hi, welcome to edxval."]\n}"""
 
 
-@attr(shard=1)
+@attr(shard=7)
 class TestVideoYouTube(TestVideo):
     METADATA = {}
 
@@ -92,7 +93,6 @@ class TestVideoYouTube(TestVideo):
                 'saveStateUrl': self.item_descriptor.xmodule_runtime.ajax_url + '/save_user_state',
                 'autoplay': False,
                 'streams': '0.75:jNCf2gIqpeE,1.00:ZwkTiUPN0mg,1.25:rsq9auxASqI,1.50:kMyNdzVHHgg',
-                'sub': 'a_sub_file.srt.sjson',
                 'sources': sources,
                 'duration': None,
                 'poster': None,
@@ -132,7 +132,7 @@ class TestVideoYouTube(TestVideo):
         )
 
 
-@attr(shard=1)
+@attr(shard=7)
 class TestVideoNonYouTube(TestVideo):
     """Integration tests: web client + mongo."""
     DATA = """
@@ -174,7 +174,6 @@ class TestVideoNonYouTube(TestVideo):
                 'saveStateUrl': self.item_descriptor.xmodule_runtime.ajax_url + '/save_user_state',
                 'autoplay': False,
                 'streams': '1.00:3_yD_cEKoCk',
-                'sub': 'a_sub_file.srt.sjson',
                 'sources': sources,
                 'duration': None,
                 'poster': None,
@@ -214,7 +213,7 @@ class TestVideoNonYouTube(TestVideo):
         )
 
 
-@attr(shard=1)
+@attr(shard=7)
 @ddt.ddt
 class TestGetHtmlMethod(BaseTestXmodule):
     '''
@@ -232,7 +231,6 @@ class TestGetHtmlMethod(BaseTestXmodule):
             'saveStateUrl': '',
             'autoplay': settings.FEATURES.get('AUTOPLAY_VIDEOS', True),
             'streams': '1.00:3_yD_cEKoCk',
-            'sub': 'a_sub_file.srt.sjson',
             'sources': '[]',
             'duration': 111.0,
             'poster': None,
@@ -363,7 +361,6 @@ class TestGetHtmlMethod(BaseTestXmodule):
                 'transcriptAvailableTranslationsUrl': self.get_handler_url('transcript', 'available_translations'),
                 'publishCompletionUrl': self.get_handler_url('publish_completion', ''),
                 'saveStateUrl': self.item_descriptor.xmodule_runtime.ajax_url + '/save_user_state',
-                'sub': data['sub'],
             })
             expected_context.update({
                 'transcript_download_format': (
@@ -990,7 +987,7 @@ class TestGetHtmlMethod(BaseTestXmodule):
         self.assertIn("\'poster\': \'null\'", context)
 
 
-@attr(shard=1)
+@attr(shard=7)
 class TestVideoCDNRewriting(BaseTestXmodule):
     """
     Tests for Video CDN.
@@ -1047,7 +1044,7 @@ class TestVideoCDNRewriting(BaseTestXmodule):
         self.assertIsNone(rewrite_video_url("", ""))
 
 
-@attr(shard=1)
+@attr(shard=7)
 @ddt.ddt
 class TestVideoDescriptorInitialization(BaseTestXmodule):
     """
@@ -1206,7 +1203,7 @@ class TestVideoDescriptorInitialization(BaseTestXmodule):
         self.assertEqual(context['transcripts_basic_tab_metadata']['video_url']['value'], video_url)
 
 
-@attr(shard=1)
+@attr(shard=7)
 @ddt.ddt
 class TestEditorSavedMethod(BaseTestXmodule):
     """
@@ -1249,7 +1246,6 @@ class TestEditorSavedMethod(BaseTestXmodule):
         # calling editor_saved will generate new file subs_video.srt.sjson for html5_sources
         item.editor_saved(self.user, old_metadata, None)
         self.assertIsInstance(Transcript.get_asset(item.location, 'subs_3_yD_cEKoCk.srt.sjson'), StaticContent)
-        self.assertIsInstance(Transcript.get_asset(item.location, 'subs_video.srt.sjson'), StaticContent)
 
     @ddt.data(ModuleStoreEnum.Type.mongo, ModuleStoreEnum.Type.split)
     def test_editor_saved_when_youtube_and_html5_subs_exist(self, default_store):
@@ -1494,7 +1490,6 @@ class TestVideoDescriptorStudentViewJson(TestCase):
         ({'uk': 1, 'de': 1}, 'en-subs', ['de', 'en'], ['en', 'uk', 'de']),
     )
     @ddt.unpack
-    @patch('openedx.core.djangoapps.video_config.models.VideoTranscriptEnabledFlag.feature_enabled', Mock(return_value=True))
     @patch('xmodule.video_module.transcripts_utils.edxval_api.get_available_transcript_languages')
     def test_student_view_with_val_transcripts_enabled(self, transcripts, english_sub, val_transcripts,
                                                        expected_transcripts, mock_get_transcript_languages):
@@ -1507,23 +1502,8 @@ class TestVideoDescriptorStudentViewJson(TestCase):
         student_view_response = self.get_result()
         self.assertItemsEqual(student_view_response['transcripts'].keys(), expected_transcripts)
 
-    @patch(
-        'openedx.core.djangoapps.video_config.models.VideoTranscriptEnabledFlag.feature_enabled',
-        Mock(return_value=False),
-    )
-    @patch(
-        'xmodule.video_module.transcripts_utils.edxval_api.get_available_transcript_languages',
-        Mock(return_value=['ro', 'es']),
-    )
-    def test_student_view_with_val_transcripts_disabled(self):
-        """
-        Test `student_view_data` with edx-val transcripts disabled.
-        """
-        student_view_response = self.get_result()
-        self.assertDictEqual(student_view_response['transcripts'], {self.TEST_LANGUAGE: self.transcript_url})
 
-
-@attr(shard=1)
+@attr(shard=7)
 @ddt.ddt
 class VideoDescriptorTest(TestCase, VideoDescriptorTestBase):
     """
@@ -1610,16 +1590,19 @@ class VideoDescriptorTest(TestCase, VideoDescriptorTestBase):
 
         actual = self.descriptor.definition_to_xml(resource_fs=self.file_system)
         expected_str = """
-            <video download_video="false" url_name="SampleProblem">
+            <video download_video="false" url_name="SampleProblem" transcripts='{transcripts}'>
                 <video_asset client_video_id="test_client_video_id" duration="111.0" image="">
                     <encoded_video profile="mobile" url="http://example.com/video" file_size="222" bitrate="333"/>
                     <transcripts>
                         <transcript file_format="srt" language_code="{language_code}" provider="Cielo24"/>
                     </transcripts>
                 </video_asset>
+                <transcript language="{language_code}" src="{transcript_file}"/>
             </video>
         """.format(
-            language_code=language_code
+            language_code=language_code,
+            transcript_file=transcript_file_name,
+            transcripts=json.dumps({language_code: transcript_file_name})
         )
         parser = etree.XMLParser(remove_blank_text=True)
         expected = etree.XML(expected_str, parser=parser)
@@ -1632,6 +1615,66 @@ class VideoDescriptorTest(TestCase, VideoDescriptorTestBase):
         expected_transcript_content = File(open(expected_transcript_path)).read()
         transcript = get_video_transcript_data(video_id=self.descriptor.edx_video_id, language_code=language_code)
         self.assertEqual(transcript['content'], expected_transcript_content)
+
+    @ddt.data(
+        (['en', 'da'], 'test_sub', ''),
+        (['da'], 'test_sub', 'test_sub')
+    )
+    @ddt.unpack
+    def test_export_val_transcripts_backward_compatibility(self, languages, sub, expected_sub):
+        """
+        Tests new transcripts export for backward compatibility.
+        """
+        self.descriptor.edx_video_id = 'test_video_id'
+        self.descriptor.sub = sub
+
+        # Setup VAL encode profile, video and transcripts
+        create_profile('mobile')
+        create_video({
+            'edx_video_id': self.descriptor.edx_video_id,
+            'client_video_id': 'test_client_video_id',
+            'duration': 111.0,
+            'status': 'dummy',
+            'encoded_videos': [{
+                'profile': 'mobile',
+                'url': 'http://example.com/video',
+                'file_size': 222,
+                'bitrate': 333,
+            }],
+        })
+
+        for language in languages:
+            create_video_transcript(
+                video_id=self.descriptor.edx_video_id,
+                language_code=language,
+                file_format=Transcript.SRT,
+                content=ContentFile(TRANSCRIPT_FILE_SRT_DATA)
+            )
+
+        # Export the video module into xml
+        video_xml = self.descriptor.definition_to_xml(resource_fs=self.file_system)
+
+        # Assert `sub` and `transcripts` attribute in the xml
+        self.assertEqual(video_xml.get('sub'), expected_sub)
+
+        expected_transcripts = {
+            language: "{edx_video_id}-{language}.srt".format(
+                edx_video_id=self.descriptor.edx_video_id,
+                language=language
+            )
+            for language in languages
+        }
+        self.assertDictEqual(json.loads(video_xml.get('transcripts')), expected_transcripts)
+
+        # Assert transcript content from course OLX
+        for language in languages:
+            expected_transcript_path = combine(
+                combine(self.temp_dir, EXPORT_IMPORT_COURSE_DIR),
+                combine(EXPORT_IMPORT_STATIC_DIR, expected_transcripts[language])
+            )
+            expected_transcript_content = File(open(expected_transcript_path)).read()
+            transcript = get_video_transcript_data(video_id=self.descriptor.edx_video_id, language_code=language)
+            self.assertEqual(transcript['content'], expected_transcript_content)
 
     def test_export_val_data_not_found(self):
         """
@@ -2076,7 +2119,6 @@ class TestVideoWithBumper(TestVideo):
                 'saveStateUrl': self.item_descriptor.xmodule_runtime.ajax_url + '/save_user_state',
                 'autoplay': False,
                 'streams': '0.75:jNCf2gIqpeE,1.00:ZwkTiUPN0mg,1.25:rsq9auxASqI,1.50:kMyNdzVHHgg',
-                'sub': 'a_sub_file.srt.sjson',
                 'sources': sources,
                 'poster': None,
                 'duration': None,
@@ -2148,7 +2190,6 @@ class TestAutoAdvanceVideo(TestVideo):
                 'saveStateUrl': self.item_descriptor.xmodule_runtime.ajax_url + '/save_user_state',
                 'autoplay': False,
                 'streams': '0.75:jNCf2gIqpeE,1.00:ZwkTiUPN0mg,1.25:rsq9auxASqI,1.50:kMyNdzVHHgg',
-                'sub': 'a_sub_file.srt.sjson',
                 'sources': [u'example.mp4', u'example.webm'],
                 'duration': None,
                 'poster': None,

@@ -2,7 +2,7 @@
 <%!
 from django.utils.translation import ugettext as _
 from django.utils.translation import pgettext
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from courseware.courses import get_course_about_section
 from django.conf import settings
 from six import text_type
@@ -123,7 +123,7 @@ from six import string_types
         </div>
 
         <div class="main-cta">
-        %if user.is_authenticated() and registered:
+        %if user.is_authenticated and registered:
           %if show_courseware_link:
             <a href="${course_target}">
           %endif
@@ -152,7 +152,7 @@ from six import string_types
           <span class="register disabled">${_("Enrollment is Closed")}</span>
         %elif can_add_course_to_cart:
           <%
-          if user.is_authenticated():
+          if user.is_authenticated:
             reg_href = "#"
             reg_element_id = "add_to_cart_post"
           else:
@@ -328,6 +328,13 @@ from six import string_types
     </div>
       %endif
 
+    % if sidebar_html_enabled:
+      % if get_course_about_section(request, course, "about_sidebar_html"):
+        <section class="about-sidebar-html">
+          ${get_course_about_section(request, course, "about_sidebar_html")}
+        </section>
+      % endif
+    %endif
   </div>
 
   </div>

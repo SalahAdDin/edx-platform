@@ -217,24 +217,30 @@ class TestMigrateTranscripts(ModuleStoreTestCase):
         """
         Test migrate transcripts logging and output
         """
+        course_id = unicode(self.course.id)
         expected_log = (
             (LOGGER_NAME,
              'INFO',
-             u'[Transcript migration] process for course {} started. Migrating 1 videos'.format(
-                 unicode(self.course.id)
+             u'[Transcript Migration] process for course {} started. Migrating transcripts from 1 videos.'.format(
+                 course_id
              )),
             (LOGGER_NAME,
              'INFO',
-             '[Transcript migration] Migrating 2 transcripts'),
+             u'[Transcript Migration] Migrating 2 transcripts for course {}.'.format(course_id)),
             (LOGGER_NAME,
              'INFO',
-             u'[Transcript migration] process for course {} ended. Processed 2 transcripts'.format(
-                 unicode(self.course.id)
+             u'[Transcript Migration] Result: Language hr transcript of video test_edx_video_id will be migrated'),
+            (LOGGER_NAME,
+             'INFO',
+             u'[Transcript Migration] Result: Language ge transcript of video test_edx_video_id will be migrated'),
+            (LOGGER_NAME,
+             'INFO',
+             u'[Transcript Migration] task submission for course {} ended.'.format(
+                 course_id
              )),
             (LOGGER_NAME,
              'INFO',
-             '[Transcript migration] Result: Language hr transcript of video test_edx_video_id will be migrated'
-             '\nLanguage ge transcript of video test_edx_video_id will be migrated')
+             "[Transcript Migration] Result: None")
         )
 
         with LogCapture(LOGGER_NAME, level=logging.INFO) as logger:
@@ -247,36 +253,34 @@ class TestMigrateTranscripts(ModuleStoreTestCase):
         """
         Test migrate transcripts exception logging
         """
+        course_id = unicode(self.course_2.id)
         expected_log = (
             (LOGGER_NAME,
              'INFO',
-             u'[Transcript migration] process for course {} started. Migrating 1 videos'.format(
-                 unicode(self.course_2.id)
+             u'[Transcript Migration] process for course {} started. Migrating transcripts from 1 videos.'.format(
+                 course_id
              )),
             (LOGGER_NAME,
              'INFO',
-             '[Transcript migration] Migrating 1 transcripts'),
+             u'[Transcript Migration] Migrating 1 transcripts for course {}.'.format(course_id)),
             (LOGGER_NAME,
              'INFO',
-             u'[Transcript migration] process for ge transcript started'),
+             u'[Transcript migration] migration process is started for video [test_edx_video_id_2] language [ge].'),
             (LOGGER_NAME,
              'ERROR',
-             '[Transcript migration] Exception: u"SON(['
-             '(\'category\', \'asset\'), (\'name\', u\'not_found.srt\'),'
-             ' (\'course\', u\'{}\'), (\'tag\', \'c4x\'), (\'org\', u\'{}\'),'
-             ' (\'revision\', None)])"'.format(self.course_2.id.course, self.course_2.id.org)),
+             u"[Transcript migration] transcript migration failed for video [test_edx_video_id_2] and language [ge]."),
             (LOGGER_NAME,
              'INFO',
-             u'[Transcript migration] process for course {} ended. Processed 1 transcripts'.format(
-                 unicode(self.course_2.id)
+             "[Transcript Migration] Result: Failed: language ge of video test_edx_video_id_2 with exception "
+             "No transcript for `ge` language"),
+            (LOGGER_NAME,
+             'INFO',
+             u'[Transcript Migration] task submission for course {} ended.'.format(
+                 course_id
              )),
             (LOGGER_NAME,
              'INFO',
-             "[Transcript migration] Result: Failed: language ge of video test_edx_video_id_2 with exception SON(["
-             "('category', 'asset'), ('name', u'not_found.srt'), ('course', u'{}'),"
-             " ('tag', 'c4x'), ('org', u'{}'), ('revision', None)])".format(
-                 self.course_2.id.course, self.course_2.id.org)
-             )
+             "[Transcript Migration] Result: None")
         )
 
         with LogCapture(LOGGER_NAME, level=logging.INFO) as logger:

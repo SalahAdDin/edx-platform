@@ -2,7 +2,6 @@
 Tests for bookmarks api.
 """
 import ddt
-import pytest
 from mock import patch
 from nose.plugins.attrib import attr
 
@@ -37,10 +36,9 @@ class BookmarkApiEventTestMixin(object):
         self.assertFalse(mock_tracker.called)  # pylint: disable=maybe-no-member
 
 
-@attr(shard=2)
+@attr(shard=9)
 @ddt.ddt
 @skip_unless_lms
-@pytest.mark.django111_expected_failure
 class BookmarksAPITests(BookmarkApiEventTestMixin, BookmarksTestsBase):
     """
     These tests cover the parts of the API methods.

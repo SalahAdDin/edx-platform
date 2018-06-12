@@ -4,7 +4,7 @@ Tests for class dashboard (Metrics tab in instructor dashboard)
 
 import json
 
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.test.client import RequestFactory
 from mock import patch
 from nose.plugins.attrib import attr
@@ -32,7 +32,7 @@ from xmodule.modulestore.tests.factories import CourseFactory, ItemFactory
 USER_COUNT = 11
 
 
-@attr(shard=1)
+@attr(shard=6)
 class TestGetProblemGradeDistribution(SharedModuleStoreTestCase):
     """
     Tests related to class_dashboard/dashboard_data.py

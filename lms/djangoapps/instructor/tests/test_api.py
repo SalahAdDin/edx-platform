@@ -16,7 +16,7 @@ from django.conf import settings
 from django.contrib.auth.models import User
 from django.core import mail
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.core.urlresolvers import reverse as django_reverse
+from django.urls import reverse as django_reverse
 from django.http import HttpRequest, HttpResponse
 from django.test import RequestFactory, TestCase
 from django.test.utils import override_settings
@@ -86,7 +86,9 @@ from student.models import (
     CourseEnrollment,
     CourseEnrollmentAllowed,
     ManualEnrollmentAudit,
-    NonExistentCourseError
+    NonExistentCourseError,
+    get_retired_email_by_email,
+    get_retired_username_by_username
 )
 from student.roles import CourseBetaTesterRole, CourseFinanceAdminRole, CourseInstructorRole, CourseSalesAdminRole
 from student.tests.factories import AdminFactory, UserFactory
@@ -268,7 +270,7 @@ def view_queue_connection_error(request):  # pylint: disable=unused-argument
     raise QueueConnectionError()
 
 
-@attr(shard=1)
+@attr(shard=5)
 @ddt.ddt
 class TestCommonExceptions400(TestCase):
     """
@@ -321,7 +323,7 @@ class TestCommonExceptions400(TestCase):
         self.assertIn('Error occured. Please try again later', resp.content)
 
 
-@attr(shard=1)
+@attr(shard=5)
 @ddt.ddt
 class TestEndpointHttpMethods(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
     """
@@ -376,7 +378,7 @@ class TestEndpointHttpMethods(SharedModuleStoreTestCase, LoginEnrollmentTestCase
         )
 
 
-@attr(shard=1)
+@attr(shard=5)
 @patch('bulk_email.models.html_to_text', Mock(return_value='Mocking CourseEmail.text_message', autospec=True))
 class TestInstructorAPIDenyLevels(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
     """
@@ -615,7 +617,7 @@ class TestInstructorAPIDenyLevels(SharedModuleStoreTestCase, LoginEnrollmentTest
             )
 
 
-@attr(shard=1)
+@attr(shard=5)
 @patch.dict(settings.FEATURES, {'ALLOW_AUTOMATED_SIGNUPS': True})
 class TestInstructorAPIBulkAccountCreationAndEnrollment(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
     """
@@ -842,6 +844,36 @@ class TestInstructorAPIBulkAccountCreationAndEnrollment(SharedModuleStoreTestCas
         self.assertEqual(manual_enrollments.count(), 1)
         self.assertTrue(manual_enrollments[0].state_transition, UNENROLLED_TO_ENROLLED)
 
+    def test_user_with_retired_email_in_csv(self):
+        """
+        If the CSV contains email addresses which correspond with users which
+        have already been retired, confirm that the attempt returns invalid
+        email errors.
+        """
+
+        # This email address is re-used to create a retired account and another account.
+        conflicting_email = 'test_student@example.com'
+
+        # prep a retired user
+        user = UserFactory.create(username='old_test_student', email=conflicting_email)
+        user.email = get_retired_email_by_email(user.email)
+        user.username = get_retired_username_by_username(user.username)
+        user.is_active = False
+        user.save()
+
+        csv_content = "{email},{username},tester,USA".format(email=conflicting_email, username='new_test_student')
+
+        uploaded_file = SimpleUploadedFile("temp.csv", csv_content)
+        response = self.client.post(self.url, {'students_list': uploaded_file})
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.content)
+        self.assertNotEquals(len(data['row_errors']), 0)
+        self.assertEquals(
+            data['row_errors'][0]['response'],
+            'Invalid email {email}.'.format(email=conflicting_email)
+        )
+        self.assertFalse(User.objects.filter(email=conflicting_email).exists())
+
     def test_user_with_already_existing_username_in_csv(self):
         """
         If the username already exists (but not the email),
@@ -907,8 +939,16 @@ class TestInstructorAPIBulkAccountCreationAndEnrollment(SharedModuleStoreTestCas
 
     def test_users_created_and_enrolled_successfully_if_others_fail(self):
 
+        # prep a retired user
+        user = UserFactory.create(username='old_test_student_4', email='test_student4@example.com')
+        user.email = get_retired_email_by_email(user.email)
+        user.username = get_retired_username_by_username(user.username)
+        user.is_active = False
+        user.save()
+
         csv_content = "test_student1@example.com,test_student_1,tester1,USA\n" \
                       "test_student3@example.com,test_student_1,tester3,CA\n" \
+                      "test_student4@example.com,test_student_4,tester4,USA\n" \
                       "test_student2@example.com,test_student_2,tester2,USA"
 
         uploaded_file = SimpleUploadedFile("temp.csv", csv_content)
@@ -916,10 +956,18 @@ class TestInstructorAPIBulkAccountCreationAndEnrollment(SharedModuleStoreTestCas
         self.assertEqual(response.status_code, 200)
         data = json.loads(response.content)
         self.assertNotEquals(len(data['row_errors']), 0)
-        self.assertEquals(data['row_errors'][0]['response'], 'Username {user} already exists.'.format(user='test_student_1'))
+        self.assertEquals(
+            data['row_errors'][0]['response'],
+            'Username {user} already exists.'.format(user='test_student_1')
+        )
+        self.assertEquals(
+            data['row_errors'][1]['response'],
+            'Invalid email {email}.'.format(email='test_student4@example.com')
+        )
         self.assertTrue(User.objects.filter(username='test_student_1', email='test_student1@example.com').exists())
         self.assertTrue(User.objects.filter(username='test_student_2', email='test_student2@example.com').exists())
         self.assertFalse(User.objects.filter(email='test_student3@example.com').exists())
+        self.assertFalse(User.objects.filter(email='test_student4@example.com').exists())
 
         manual_enrollments = ManualEnrollmentAudit.objects.all()
         self.assertEqual(manual_enrollments.count(), 2)
@@ -1028,7 +1076,7 @@ class TestInstructorAPIBulkAccountCreationAndEnrollment(SharedModuleStoreTestCas
             self.assertEqual(enrollment.enrollment.mode, CourseMode.DEFAULT_SHOPPINGCART_MODE_SLUG)
 
 
-@attr(shard=1)
+@attr(shard=5)
 @ddt.ddt
 class TestInstructorAPIEnrollment(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
     """
@@ -1774,7 +1822,7 @@ class TestInstructorAPIEnrollment(SharedModuleStoreTestCase, LoginEnrollmentTest
         return response
 
 
-@attr(shard=1)
+@attr(shard=5)
 @ddt.ddt
 class TestInstructorAPIBulkBetaEnrollment(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
     """
@@ -2104,7 +2152,7 @@ class TestInstructorAPIBulkBetaEnrollment(SharedModuleStoreTestCase, LoginEnroll
         )
 
 
-@attr(shard=1)
+@attr(shard=5)
 class TestInstructorAPILevelsAccess(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
     """
     Test endpoints whereby instructors can change permissions
@@ -2346,7 +2394,7 @@ class TestInstructorAPILevelsAccess(SharedModuleStoreTestCase, LoginEnrollmentTe
             self.assertNotIn(rolename, user_roles)
 
 
-@attr(shard=1)
+@attr(shard=5)
 @ddt.ddt
 @patch.dict('django.conf.settings.FEATURES', {'ENABLE_PAID_COURSE_REGISTRATION': True})
 class TestInstructorAPILevelsDataDump(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
@@ -3217,7 +3265,7 @@ class TestInstructorAPILevelsDataDump(SharedModuleStoreTestCase, LoginEnrollment
         self.assertEqual(response.status_code, 400)
 
 
-@attr(shard=1)
+@attr(shard=5)
 class TestInstructorAPIRegradeTask(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
     """
     Test endpoints whereby instructors can change student grades.
@@ -3381,7 +3429,7 @@ class TestInstructorAPIRegradeTask(SharedModuleStoreTestCase, LoginEnrollmentTes
         self.assertEqual(response.status_code, 400)
 
 
-@attr(shard=1)
+@attr(shard=5)
 @patch.dict(settings.FEATURES, {'ENTRANCE_EXAMS': True})
 @ddt.ddt
 class TestEntranceExamInstructorAPIRegradeTask(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
@@ -3663,7 +3711,7 @@ class TestEntranceExamInstructorAPIRegradeTask(SharedModuleStoreTestCase, LoginE
         self.assertContains(response, message)
 
 
-@attr(shard=1)
+@attr(shard=5)
 @patch('bulk_email.models.html_to_text', Mock(return_value='Mocking CourseEmail.text_message', autospec=True))
 class TestInstructorSendEmail(SiteMixin, SharedModuleStoreTestCase, LoginEnrollmentTestCase):
     """
@@ -3802,7 +3850,7 @@ class MockCompletionInfo(object):
         return False, 'Task Errored In Some Way'
 
 
-@attr(shard=1)
+@attr(shard=5)
 class TestInstructorAPITaskLists(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
     """
     Test instructor task list endpoint.
@@ -3972,7 +4020,7 @@ class TestInstructorAPITaskLists(SharedModuleStoreTestCase, LoginEnrollmentTestC
         self.assertEqual(actual_tasks, expected_tasks)
 
 
-@attr(shard=1)
+@attr(shard=5)
 @patch.object(lms.djangoapps.instructor_task.api, 'get_instructor_task_history', autospec=True)
 class TestInstructorEmailContentList(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
     """
@@ -4106,7 +4154,7 @@ class TestInstructorEmailContentList(SharedModuleStoreTestCase, LoginEnrollmentT
         self.assertDictEqual(expected_info, returned_info)
 
 
-@attr(shard=1)
+@attr(shard=5)
 class TestInstructorAPIHelpers(TestCase):
     """ Test helpers for instructor.api """
 
@@ -4160,7 +4208,7 @@ def get_extended_due(course, unit, user):
         return None
 
 
-@attr(shard=1)
+@attr(shard=5)
 class TestDueDateExtensions(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
     """
     Test data dumps for reporting.
@@ -4329,8 +4377,12 @@ class TestDueDateExtensions(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
                 self.user1.profile.name, self.user1.username)})
 
 
-@attr(shard=1)
+@attr(shard=5)
 class TestDueDateExtensionsDeletedDate(ModuleStoreTestCase, LoginEnrollmentTestCase):
+    """
+    Tests for deleting due date extensions
+    """
+
     def setUp(self):
         """
         Fixtures.
@@ -4437,7 +4489,7 @@ class TestDueDateExtensionsDeletedDate(ModuleStoreTestCase, LoginEnrollmentTestC
         )
 
 
-@attr(shard=1)
+@attr(shard=5)
 class TestCourseIssuedCertificatesData(SharedModuleStoreTestCase):
     """
     Test data dumps for issued certificates.
@@ -4548,7 +4600,7 @@ class TestCourseIssuedCertificatesData(SharedModuleStoreTestCase):
         )
 
 
-@attr(shard=1)
+@attr(shard=5)
 @override_settings(REGISTRATION_CODE_LENGTH=8)
 class TestCourseRegistrationCodes(SharedModuleStoreTestCase):
     """
@@ -5011,7 +5063,7 @@ class TestCourseRegistrationCodes(SharedModuleStoreTestCase):
         self.assertTrue(body.startswith(EXPECTED_COUPON_CSV_HEADER))
 
 
-@attr(shard=1)
+@attr(shard=5)
 class TestBulkCohorting(SharedModuleStoreTestCase):
     """
     Test adding users to cohorts in bulk via CSV upload.

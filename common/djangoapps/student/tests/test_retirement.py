@@ -4,11 +4,11 @@ Test user retirement methods
 import json
 
 import ddt
+from django.apps import apps
 from django.conf import settings
 from django.contrib.auth.models import User
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.test import TestCase
-from django.test.utils import override_settings
 import pytest
 
 from student.models import (
@@ -17,7 +17,8 @@ from student.models import (
     get_potentially_retired_user_by_username_and_hash,
     get_retired_email_by_email,
     get_retired_username_by_username,
-    is_username_retired
+    is_username_retired,
+    is_email_retired
 )
 from student.tests.factories import UserFactory
 
@@ -31,6 +32,29 @@ assert settings.RETIRED_EMAIL_PREFIX
 assert settings.RETIRED_EMAIL_DOMAIN
 assert "{}" in settings.RETIRED_USERNAME_FMT
 assert "{}@" in settings.RETIRED_EMAIL_FMT
+
+
+@pytest.fixture
+def retirement_user():
+    return UserFactory.create(username='test_user')
+
+
+@pytest.fixture
+def retirement_status(retirement_user):  # pylint: disable=redefined-outer-name
+    """
+    Returns a UserRetirementStatus test fixture object.
+    """
+    RetirementState = apps.get_model('user_api', 'RetirementState')
+    UserRetirementStatus = apps.get_model('user_api', 'UserRetirementStatus')
+    RetirementState.objects.create(
+        state_name='RETIRING_LMS',
+        state_execution_order=1,
+        required=False,
+        is_dead_end_state=False
+    )
+    status = UserRetirementStatus.create_retirement(retirement_user)
+    status.save()
+    return status
 
 
 def check_username_against_fmt(hashed_username):
@@ -58,6 +82,16 @@ def test_get_retired_username():
     user = UserFactory()
     hashed_username = get_retired_username_by_username(user.username)
     check_username_against_fmt(hashed_username)
+
+
+def test_get_retired_username_status_exists(retirement_user, retirement_status):  # pylint: disable=redefined-outer-name
+    """
+    Checks that a retired username is gotten from a UserRetirementStatus
+    object when one already exists for a user.
+    """
+    hashed_username = get_retired_username_by_username(retirement_user.username)
+    check_username_against_fmt(hashed_username)
+    assert retirement_status.retired_username == hashed_username
 
 
 def test_get_all_retired_usernames_by_username():
@@ -99,6 +133,29 @@ def test_is_username_retired_not_retired():
     assert not is_username_retired(user.username)
 
 
+def test_is_email_retired_is_retired():
+    """
+    Check functionality of is_email_retired when email is retired
+    """
+    user = UserFactory()
+    original_email = user.email
+    retired_email = get_retired_email_by_email(user.email)
+
+    # Fake email retirement.
+    user.email = retired_email
+    user.save()
+
+    assert is_email_retired(original_email)
+
+
+def test_is_email_retired_not_retired():
+    """
+    Check functionality of is_email_retired when email is not retired
+    """
+    user = UserFactory()
+    assert not is_email_retired(user.email)
+
+
 def test_get_retired_email():
     """
     Basic testing of retired emails.
@@ -106,6 +163,16 @@ def test_get_retired_email():
     user = UserFactory()
     hashed_email = get_retired_email_by_email(user.email)
     check_email_against_fmt(hashed_email)
+
+
+def test_get_retired_email_status_exists(retirement_user, retirement_status):  # pylint: disable=redefined-outer-name
+    """
+    Checks that a retired email is gotten from a UserRetirementStatus
+    object when one already exists for a user.
+    """
+    hashed_email = get_retired_email_by_email(retirement_user.email)
+    check_email_against_fmt(hashed_email)
+    assert retirement_status.retired_email == hashed_email
 
 
 def test_get_all_retired_email_by_email():

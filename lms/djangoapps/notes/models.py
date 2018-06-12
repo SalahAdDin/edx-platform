@@ -2,7 +2,7 @@ import json
 
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.db import models
 from django.utils.html import strip_tags
 from opaque_keys.edx.django.models import CourseKeyField
@@ -10,7 +10,7 @@ from six import text_type
 
 
 class Note(models.Model):
-    user = models.ForeignKey(User, db_index=True)
+    user = models.ForeignKey(User, db_index=True, on_delete=models.CASCADE)
     course_id = CourseKeyField(max_length=255, db_index=True)
     uri = models.CharField(max_length=255, db_index=True)
     text = models.TextField(default="")

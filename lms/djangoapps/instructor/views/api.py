@@ -18,9 +18,14 @@ import time
 import unicodecsv
 from django.conf import settings
 from django.contrib.auth.models import User
-from django.core.exceptions import ObjectDoesNotExist, PermissionDenied, ValidationError
+from django.core.exceptions import (
+    MultipleObjectsReturned,
+    ObjectDoesNotExist,
+    PermissionDenied,
+    ValidationError
+)
 from django.core.mail.message import EmailMessage
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
 from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseForbidden, HttpResponseNotFound
@@ -105,7 +110,8 @@ from student.models import (
     UserProfile,
     anonymous_id_for_user,
     get_user_by_username_or_email,
-    unique_id_for_user
+    unique_id_for_user,
+    is_email_retired
 )
 from student.roles import CourseFinanceAdminRole, CourseSalesAdminRole
 from submissions import api as sub_api  # installed from the edx-submissions repository
@@ -152,6 +158,8 @@ def common_exceptions_400(func):
             return func(request, *args, **kwargs)
         except User.DoesNotExist:
             message = _('User does not exist.')
+        except MultipleObjectsReturned:
+            message = _('Found a conflict with given identifier. Please try an alternative identifier')
         except (AlreadyRunningError, QueueConnectionError) as err:
             message = unicode(err)
 
@@ -412,6 +420,16 @@ def register_and_enroll_students(request, course_id):  # pylint: disable=too-man
                             state_transition=UNENROLLED_TO_ENROLLED,
                         )
                         enroll_email(course_id=course_id, student_email=email, auto_enroll=True, email_students=True, email_params=email_params)
+                elif is_email_retired(email):
+                    # We are either attempting to enroll a retired user or create a new user with an email which is
+                    # already associated with a retired account.  Simply block these attempts.
+                    row_errors.append({
+                        'username': username,
+                        'email': email,
+                        'response': _('Invalid email {email_address}.').format(email_address=email),
+                    })
+                    log.warning(u'Email address %s is associated with a retired user, so course enrollment was ' +
+                                u'blocked.', email)
                 else:
                     # This email does not yet exist, so we need to create a new account
                     # If username already exists in the database, then create_and_enroll_user

@@ -8,9 +8,8 @@ from copy import deepcopy
 import ddt
 import httpretty
 import mock
-import pytest
 from django.conf import settings
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.test import TestCase
 from django.test.utils import override_settings
 from nose.plugins.attrib import attr
@@ -55,7 +54,6 @@ UTILS_MODULE = 'openedx.core.djangoapps.programs.utils'
 @attr(shard=2)
 @skip_unless_lms
 @mock.patch(UTILS_MODULE + '.get_programs')
-@pytest.mark.django111_expected_failure
 class TestProgramProgressMeter(TestCase):
     """Tests of the program progress utility class."""
     def setUp(self):
@@ -1002,6 +1000,20 @@ class TestProgramDataExtender(ModuleStoreTestCase):
         Verify that the student's run mode certificate is included,
         when available.
         """
+        certificates = [
+            {
+                'id': 1,
+                'name': 'Test Certificate Name',
+                'description': 'Test Certificate Description',
+                'course_title': 'tes_course_title',
+                'signatories': [],
+                'version': 1,
+                'is_active': True
+            }
+        ]
+        self.course.certificates = {'certificates': certificates}
+        self.course = self.update_course(self.course, self.user.id)
+
         test_uuid = uuid.uuid4().hex
         mock_get_cert_data.return_value = {'uuid': test_uuid} if is_uuid_available else {}
         mock_html_certs_enabled.return_value = True
@@ -1516,6 +1528,7 @@ class TestProgramMarketingDataExtender(ModuleStoreTestCase):
         data = ProgramMarketingDataExtender(self.program, self.user).extend()
         self._update_discount_data(mock_discount_data)
 
+        self.assertEqual(httpretty.last_request().querystring.get('username')[0], self.user.username)
         self.assertEqual(
             data['skus'],
             [course['course_runs'][0]['seats'][0]['sku'] for course in self.program['courses']]
@@ -1545,6 +1558,7 @@ class TestProgramMarketingDataExtender(ModuleStoreTestCase):
         data = ProgramMarketingDataExtender(self.program, user).extend()
         self._update_discount_data(mock_discount_data)
 
+        self.assertIsNotNone(httpretty.last_request().querystring.get('is_anonymous', None))
         self.assertEqual(
             data['skus'],
             [course['course_runs'][0]['seats'][0]['sku'] for course in self.program['courses']]

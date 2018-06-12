@@ -561,9 +561,6 @@ JWT_AUTH.update({
 
 COURSE_CATALOG_API_URL = 'https://catalog.example.com/api/v1'
 
-CREDENTIALS_INTERNAL_SERVICE_URL = 'https://credentials-internal.example.com'
-CREDENTIALS_PUBLIC_SERVICE_URL = 'https://credentials.example.com'
-
 COMPREHENSIVE_THEME_DIRS = [REPO_ROOT / "themes", REPO_ROOT / "common/test"]
 COMPREHENSIVE_THEME_LOCALE_PATHS = [REPO_ROOT / "themes/conf/locale", ]
 
@@ -576,6 +573,11 @@ ENTERPRISE_CONSENT_API_URL = 'http://enterprise.example.com/consent/api/v1/'
 ACTIVATION_EMAIL_FROM_ADDRESS = 'test_activate@edx.org'
 
 TEMPLATES[0]['OPTIONS']['debug'] = True
+
+########################### DRF default throttle rates ############################
+# Increasing rates to enable test cases hitting registration view succesfully.
+# Lower rate is causing view to get blocked, causing test case failure.
+REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']['registration_validation'] = '100/minute'
 
 ########################## VIDEO TRANSCRIPTS STORAGE ############################
 VIDEO_TRANSCRIPTS_SETTINGS = dict(

@@ -2,45 +2,89 @@
 """
 Test cases to cover Accounts-related behaviors of the User API application
 """
+from copy import deepcopy
 import datetime
 import hashlib
 import json
 import unittest
-from copy import deepcopy
 
+from consent.models import DataSharingConsent
 import ddt
-import pytest
-import pytz
 from django.conf import settings
 from django.contrib.auth.models import User
-from django.core.urlresolvers import reverse
+from django.contrib.sites.models import Site
+from django.core import mail
+from django.core.cache import cache
+from django.urls import reverse
 from django.test import TestCase
 from django.test.testcases import TransactionTestCase
 from django.test.utils import override_settings
-from mock import MagicMock, patch
+from enterprise.models import (
+    EnterpriseCustomer,
+    EnterpriseCustomerUser,
+    EnterpriseCourseEnrollment,
+    PendingEnterpriseCustomerUser,
+)
+from integrated_channels.sap_success_factors.models import (
+    SapSuccessFactorsLearnerDataTransmissionAudit
+)
+import mock
 from nose.plugins.attrib import attr
-from pytz import UTC
+from opaque_keys.edx.keys import CourseKey
+import pytz
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
+from six import text_type
 from social_django.models import UserSocialAuth
+from wiki.models import ArticleRevision, Article
+from wiki.models.pluginbase import RevisionPluginRevision, RevisionPlugin
+from xmodule.modulestore.tests.factories import CourseFactory
+from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
 
+from entitlements.models import CourseEntitlementSupportDetail
+from entitlements.tests.factories import CourseEntitlementFactory
+from lms.djangoapps.verify_student.tests.factories import SoftwareSecurePhotoVerificationFactory
+from openedx.core.djangoapps.api_admin.models import ApiAccessRequest
+from openedx.core.djangoapps.credit.models import (
+    CreditRequirementStatus, CreditRequest, CreditCourse, CreditProvider, CreditRequirement
+)
+from openedx.core.djangoapps.course_groups.models import CourseUserGroup, UnregisteredLearnerCohortAssignments
+from openedx.core.djangoapps.site_configuration.tests.factories import SiteFactory
 from openedx.core.djangoapps.user_api.accounts import ACCOUNT_VISIBILITY_PREF_KEY
 from openedx.core.djangoapps.user_api.accounts.signals import USER_RETIRE_MAILINGS
 from openedx.core.djangoapps.user_api.models import RetirementState, UserRetirementStatus, UserPreference, UserOrgTag
 from openedx.core.djangoapps.user_api.preferences.api import set_user_preference
 from openedx.core.djangolib.testing.utils import CacheIsolationTestCase, skip_unless_lms
 from openedx.core.lib.token_utils import JwtBuilder
-from student.models import PendingEmailChange, UserProfile, get_retired_username_by_username, get_retired_email_by_email
+from survey.models import SurveyAnswer
+from student.models import (
+    CourseEnrollment,
+    CourseEnrollmentAllowed,
+    ManualEnrollmentAudit,
+    PasswordHistory,
+    PendingEmailChange,
+    PendingNameChange,
+    Registration,
+    SocialLink,
+    UserProfile,
+    get_retired_username_by_username,
+    get_retired_email_by_email,
+)
 from student.tests.factories import (
     TEST_PASSWORD,
     ContentTypeFactory,
+    CourseEnrollmentAllowedFactory,
+    PendingEmailChangeFactory,
     PermissionFactory,
     SuperuserFactory,
     UserFactory
 )
-from .. import ALL_USERS_VISIBILITY, PRIVATE_VISIBILITY
 
-TEST_PROFILE_IMAGE_UPLOADED_AT = datetime.datetime(2002, 1, 9, 15, 43, 1, tzinfo=UTC)
+from .. import ALL_USERS_VISIBILITY, PRIVATE_VISIBILITY
+from ..views import AccountRetirementView, USER_PROFILE_PII
+from ...tests.factories import UserOrgTagFactory
+
+TEST_PROFILE_IMAGE_UPLOADED_AT = datetime.datetime(2002, 1, 9, 15, 43, 1, tzinfo=pytz.UTC)
 
 
 # this is used in one test to check the behavior of profile image url
@@ -90,6 +134,7 @@ class UserAPITestCase(APITestCase):
         self.assertEqual(expected_status, response.status_code)
         return response
 
+    # pylint: disable=no-member
     def send_put(self, client, json_data, content_type="application/json", expected_status=204):
         """
         Helper method for sending a PUT to the server. Verifies the expected status and returns the response.
@@ -98,6 +143,7 @@ class UserAPITestCase(APITestCase):
         self.assertEqual(expected_status, response.status_code)
         return response
 
+    # pylint: disable=no-member
     def send_delete(self, client, expected_status=204):
         """
         Helper method for sending a DELETE to the server. Verifies the expected status and returns the response.
@@ -205,8 +251,8 @@ class TestOwnUsernameAPI(CacheIsolationTestCase, UserAPITestCase):
 
 @ddt.ddt
 @skip_unless_lms
-@patch('openedx.core.djangoapps.user_api.accounts.image_helpers._PROFILE_IMAGE_SIZES', [50, 10])
-@patch.dict(
+@mock.patch('openedx.core.djangoapps.user_api.accounts.image_helpers._PROFILE_IMAGE_SIZES', [50, 10])
+@mock.patch.dict(
     'django.conf.settings.PROFILE_IMAGE_SIZES_MAP',
     {'full': 50, 'small': 10},
     clear=True
@@ -304,8 +350,7 @@ class TestAccountsAPI(CacheIsolationTestCase, UserAPITestCase):
     # Note: using getattr so that the patching works even if there is no configuration.
     # This is needed when testing CMS as the patching is still executed even though the
     # suite is skipped.
-    @patch.dict(getattr(settings, "ACCOUNT_VISIBILITY_CONFIGURATION", {}), {"default_visibility": "all_users"})
-    @pytest.mark.django111_expected_failure
+    @mock.patch.dict(getattr(settings, "ACCOUNT_VISIBILITY_CONFIGURATION", {}), {"default_visibility": "all_users"})
     def test_get_account_different_user_visible(self):
         """
         Test that a client (logged in) can only get the shareable fields for a different user.
@@ -320,8 +365,7 @@ class TestAccountsAPI(CacheIsolationTestCase, UserAPITestCase):
     # Note: using getattr so that the patching works even if there is no configuration.
     # This is needed when testing CMS as the patching is still executed even though the
     # suite is skipped.
-    @patch.dict(getattr(settings, "ACCOUNT_VISIBILITY_CONFIGURATION", {}), {"default_visibility": "private"})
-    @pytest.mark.django111_expected_failure
+    @mock.patch.dict(getattr(settings, "ACCOUNT_VISIBILITY_CONFIGURATION", {}), {"default_visibility": "private"})
     def test_get_account_different_user_private(self):
         """
         Test that a client (logged in) can only get the shareable fields for a different user.
@@ -333,7 +377,7 @@ class TestAccountsAPI(CacheIsolationTestCase, UserAPITestCase):
             response = self.send_get(self.different_client)
         self._verify_private_account_response(response, account_privacy=PRIVATE_VISIBILITY)
 
-    @patch.dict(settings.FEATURES, {'ENABLE_OPENBADGES': True})
+    @mock.patch.dict(settings.FEATURES, {'ENABLE_OPENBADGES': True})
     @ddt.data(
         ("client", "user", PRIVATE_VISIBILITY),
         ("different_client", "different_user", PRIVATE_VISIBILITY),
@@ -343,7 +387,6 @@ class TestAccountsAPI(CacheIsolationTestCase, UserAPITestCase):
         ("staff_client", "staff_user", ALL_USERS_VISIBILITY),
     )
     @ddt.unpack
-    @pytest.mark.django111_expected_failure
     def test_get_account_private_visibility(self, api_client, requesting_username, preference_visibility):
         """
         Test the return from GET based on user visibility setting.
@@ -617,12 +660,11 @@ class TestAccountsAPI(CacheIsolationTestCase, UserAPITestCase):
         verify_change_info(name_change_info[0], old_name, self.user.username, "Donald Duck",)
         verify_change_info(name_change_info[1], "Mickey Mouse", self.user.username, "Donald Duck")
 
-    @patch.dict(
+    @mock.patch.dict(
         'django.conf.settings.PROFILE_IMAGE_SIZES_MAP',
         {'full': 50, 'medium': 30, 'small': 10},
         clear=True
     )
-    @pytest.mark.django111_expected_failure
     def test_patch_email(self):
         """
         Test that the user can request an email change through the accounts API.
@@ -725,7 +767,7 @@ class TestAccountsAPI(CacheIsolationTestCase, UserAPITestCase):
             )
         )
 
-    @patch('openedx.core.djangoapps.user_api.accounts.serializers.AccountUserSerializer.save')
+    @mock.patch('openedx.core.djangoapps.user_api.accounts.serializers.AccountUserSerializer.save')
     def test_patch_serializer_save_fails(self, serializer_save):
         """
         Test that AccountUpdateErrors are passed through to the response.
@@ -819,7 +861,7 @@ class TestAccountAPITransactions(TransactionTestCase):
         self.user = UserFactory.create(password=TEST_PASSWORD)
         self.url = reverse("accounts_api", kwargs={'username': self.user.username})
 
-    @patch('student.views.do_email_change_request')
+    @mock.patch('student.views.do_email_change_request')
     def test_update_account_settings_rollback(self, mock_email_change):
         """
         Verify that updating account settings is transactional when a failure happens.
@@ -871,11 +913,11 @@ class TestAccountDeactivation(TestCase):
             expected_status(int): Expected request's response status.
             expected_activation_status(bool): Expected user has_usable_password attribute value.
         """
-        self.assertTrue(self.test_user.has_usable_password())  # pylint: disable=no-member
+        self.assertTrue(self.test_user.has_usable_password())
         response = self.client.post(self.url, **headers)
         self.assertEqual(response.status_code, expected_status)
-        self.test_user.refresh_from_db()  # pylint: disable=no-member
-        self.assertEqual(self.test_user.has_usable_password(), expected_activation_status)  # pylint: disable=no-member
+        self.test_user.refresh_from_db()
+        self.assertEqual(self.test_user.has_usable_password(), expected_activation_status)
 
     def test_superuser_deactivates_user(self):
         """
@@ -896,9 +938,9 @@ class TestAccountDeactivation(TestCase):
                 app_label='student'
             )
         )
-        user.user_permissions.add(permission)  # pylint: disable=no-member
+        user.user_permissions.add(permission)
         headers = self.build_jwt_headers(user)
-        self.assertTrue(self.test_user.has_usable_password())  # pylint: disable=no-member
+        self.assertTrue(self.test_user.has_usable_password())
         self.assert_activation_status(headers)
 
     def test_unauthorized_rejection(self):
@@ -916,7 +958,7 @@ class TestAccountDeactivation(TestCase):
         """
         Verify users who are not JWT authenticated are rejected.
         """
-        user = UserFactory()
+        UserFactory()
         self.assert_activation_status(
             {},
             expected_status=status.HTTP_401_UNAUTHORIZED,
@@ -924,179 +966,17 @@ class TestAccountDeactivation(TestCase):
         )
 
 
-@unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Account APIs are only supported in LMS')
-class TestAccountRetireMailings(TestCase):
-    """
-    Tests the account retire mailings endpoint.
-    """
-
-    def setUp(self):
-        super(TestAccountRetireMailings, self).setUp()
-        self.test_user = UserFactory()
-        self.test_superuser = SuperuserFactory()
-        self.test_service_user = UserFactory()
-
-        UserOrgTag.objects.create(user=self.test_user, key='email-optin', org="foo", value="True")
-        UserOrgTag.objects.create(user=self.test_user, key='email-optin', org="bar", value="True")
-
-        self.url = reverse('accounts_retire_mailings', kwargs={'username': self.test_user.username})
-
-    def build_post(self, user):
-        retired_username = get_retired_username_by_username(user.username)
-        return {'retired_username': retired_username}
-
-    def build_jwt_headers(self, user):
-        """
-        Helper function for creating headers for the JWT authentication.
-        """
-        token = JwtBuilder(user).build_token([])
-        headers = {
-            'HTTP_AUTHORIZATION': 'JWT ' + token
-        }
-        return headers
-
-    def assert_status_and_tag_count(self, headers, expected_status=status.HTTP_204_NO_CONTENT, expected_tag_count=2,
-                                    expected_tag_value="False", expected_content=None):
-        """
-        Helper function for making a request to the retire subscriptions endpoint, and asserting the status.
-        """
-        response = self.client.post(self.url, self.build_post(self.test_user), **headers)
-        self.assertEqual(response.status_code, expected_status)
-
-        # Check that the expected number of tags with the correct value exist
-        tag_count = UserOrgTag.objects.filter(user=self.test_user, value=expected_tag_value).count()
-        self.assertEqual(tag_count, expected_tag_count)
-
-        if expected_content:
-            self.assertEqual(response.content.strip('"'), expected_content)
-
-    def test_superuser_retires_user_subscriptions(self):
-        """
-        Verify a user's subscriptions are retired when a superuser posts to the retire subscriptions endpoint.
-        """
-        headers = self.build_jwt_headers(self.test_superuser)
-        self.assert_status_and_tag_count(headers)
-
-    def test_superuser_retires_user_subscriptions_no_orgtags(self):
-        """
-        Verify the call succeeds when the user doesn't have any org tags.
-        """
-        UserOrgTag.objects.all().delete()
-        headers = self.build_jwt_headers(self.test_superuser)
-        self.assert_status_and_tag_count(headers, expected_tag_count=0)
-
-    def test_unauthorized_rejection(self):
-        """
-        Verify unauthorized users cannot retire subscriptions.
-        """
-        headers = self.build_jwt_headers(self.test_user)
-
-        # User should still have 2 "True" subscriptions.
-        self.assert_status_and_tag_count(headers, expected_status=status.HTTP_403_FORBIDDEN, expected_tag_value="True")
-
-    def test_signal_failure(self):
-        """
-        Verify that if a signal fails the transaction is rolled back and a proper error message is returned.
-        """
-        headers = self.build_jwt_headers(self.test_superuser)
-
-        mock_handler = MagicMock()
-        mock_handler.side_effect = Exception("Tango")
-
-        try:
-            USER_RETIRE_MAILINGS.connect(mock_handler)
-
-            # User should still have 2 "True" subscriptions.
-            self.assert_status_and_tag_count(
-                headers,
-                expected_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                expected_tag_value="True",
-                expected_content="Tango"
-            )
-        finally:
-            USER_RETIRE_MAILINGS.disconnect(mock_handler)
-
-
-@unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Account APIs are only supported in LMS')
-class TestDeactivateLogout(TestCase):
-    """
-    Tests the account deactivation/logout endpoint.
-    """
-    def setUp(self):
-        super(TestDeactivateLogout, self).setUp()
-        self.test_user = UserFactory()
-        self.test_superuser = SuperuserFactory()
-        self.test_service_user = UserFactory()
-
-        UserSocialAuth.objects.create(
-            user=self.test_user,
-            provider='some_provider_name',
-            uid='xyz@gmail.com'
-        )
-        UserSocialAuth.objects.create(
-            user=self.test_user,
-            provider='some_other_provider_name',
-            uid='xyz@gmail.com'
-        )
-
-        self.url = reverse('deactivate_logout')
-
-    def build_jwt_headers(self, user):
-        """
-        Helper function for creating headers for the JWT authentication.
-        """
-        token = JwtBuilder(user).build_token([])
-        headers = {
-            'HTTP_AUTHORIZATION': 'JWT ' + token
-        }
-        return headers
-
-    def build_post(self, username):
-        return {'user': username}
-
-    def test_superuser_deactivates_user(self):
-        """
-        Verify a superuser calling the deactivation endpoint logs out a user and deletes all their SSO tokens.
-        """
-        headers = self.build_jwt_headers(self.test_superuser)
-        response = self.client.post(self.url, self.build_post(self.test_user.username), **headers)
-        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
-        updated_user = User.objects.get(id=self.test_user.id)
-        self.assertEqual(get_retired_email_by_email(self.test_user.email), updated_user.email)
-        self.assertFalse(updated_user.has_usable_password())
-        self.assertEqual(list(UserSocialAuth.objects.filter(user=self.test_user)), [])
-
-    def test_unauthorized_rejection(self):
-        """
-        Verify unauthorized users cannot deactivate other users.
-        """
-        headers = self.build_jwt_headers(self.test_user)
-        response = self.client.post(self.url, self.build_post(self.test_user.username), **headers)
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-
-    def test_nonexistent_user(self):
-        """
-        Verify that trying to deactivate a nonexistent user returns a 404.
-        """
-        headers = self.build_jwt_headers(self.test_superuser)
-        response = self.client.post(self.url, self.build_post("made_up_username"), **headers)
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-
-    def test_user_not_specified(self):
-        """
-        Verify that not specifying a user to the deactivation endpoint results in a 404.
-        """
-        headers = self.build_jwt_headers(self.test_superuser)
-        response = self.client.post(self.url, self.build_post(""), **headers)
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-
-
 class RetirementTestCase(TestCase):
     """
     Test case with a helper methods for retirement
     """
+    @classmethod
+    def setUpClass(cls):
+        super(RetirementTestCase, cls).setUpClass()
+        cls.setup_states()
 
-    def setup_states(self):
+    @staticmethod
+    def setup_states():
         """
         Create basic states that mimic our current understanding of the retirement process
         """
@@ -1216,6 +1096,182 @@ class RetirementTestCase(TestCase):
 
 
 @unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Account APIs are only supported in LMS')
+class TestDeactivateLogout(RetirementTestCase):
+    """
+    Tests the account deactivation/logout endpoint.
+    """
+    def setUp(self):
+        super(TestDeactivateLogout, self).setUp()
+        self.test_password = 'password'
+        self.test_user = UserFactory(password=self.test_password)
+        UserSocialAuth.objects.create(
+            user=self.test_user,
+            provider='some_provider_name',
+            uid='xyz@gmail.com'
+        )
+        UserSocialAuth.objects.create(
+            user=self.test_user,
+            provider='some_other_provider_name',
+            uid='xyz@gmail.com'
+        )
+
+        Registration().register(self.test_user)
+
+        self.url = reverse('deactivate_logout')
+
+    def build_post(self, password):
+        return {'password': password}
+
+    @mock.patch('openedx.core.djangolib.oauth2_retirement_utils')
+    def test_user_can_deactivate_self(self, retirement_utils_mock):
+        """
+        Verify a user calling the deactivation endpoint logs out the user, deletes all their SSO tokens,
+        and creates a user retirement row.
+        """
+        self.client.login(username=self.test_user.username, password=self.test_password)
+        headers = self.build_jwt_headers(self.test_user)
+        response = self.client.post(self.url, self.build_post(self.test_password), **headers)
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        # make sure the user model is as expected
+        updated_user = User.objects.get(id=self.test_user.id)
+        self.assertEqual(get_retired_email_by_email(self.test_user.email), updated_user.email)
+        self.assertFalse(updated_user.has_usable_password())
+        self.assertEqual(list(UserSocialAuth.objects.filter(user=self.test_user)), [])
+        self.assertEqual(list(Registration.objects.filter(user=self.test_user)), [])
+        self.assertEqual(len(UserRetirementStatus.objects.filter(user_id=self.test_user.id)), 1)
+        # these retirement utils are tested elsewhere; just make sure we called them
+        retirement_utils_mock.retire_dop_oauth2_models.assertCalledWith(self.test_user)
+        retirement_utils_mock.retire_dot_oauth2_models.assertCalledWith(self.test_user)
+        # make sure the user cannot log in
+        self.assertFalse(self.client.login(username=self.test_user.username, password=self.test_password))
+        # make sure that an email has been sent
+        self.assertEqual(len(mail.outbox), 1)
+        # ensure that it's been sent to the correct email address
+        self.assertIn(self.test_user.email, mail.outbox[0].to)
+
+    def test_password_mismatch(self):
+        """
+        Verify that the user submitting a mismatched password results in
+        a rejection.
+        """
+        self.client.login(username=self.test_user.username, password=self.test_password)
+        headers = self.build_jwt_headers(self.test_user)
+        response = self.client.post(self.url, self.build_post(self.test_password + "xxxx"), **headers)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_called_twice(self):
+        """
+        Verify a user calling the deactivation endpoint a second time results in a "forbidden"
+        error, as the user will be logged out.
+        """
+        self.client.login(username=self.test_user.username, password=self.test_password)
+        headers = self.build_jwt_headers(self.test_user)
+        response = self.client.post(self.url, self.build_post(self.test_password), **headers)
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.client.login(username=self.test_user.username, password=self.test_password)
+        headers = self.build_jwt_headers(self.test_user)
+        response = self.client.post(self.url, self.build_post(self.test_password), **headers)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+@unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Account APIs are only supported in LMS')
+class TestAccountRetireMailings(RetirementTestCase):
+    """
+    Tests the account retire mailings endpoint.
+    """
+    def setUp(self):
+        super(TestAccountRetireMailings, self).setUp()
+        self.test_superuser = SuperuserFactory()
+        self.test_service_user = UserFactory()
+
+        # Should be created in parent setUpClass
+        retiring_email_lists = RetirementState.objects.get(state_name='RETIRING_EMAIL_LISTS')
+
+        self.retirement = self._create_retirement(retiring_email_lists)
+        self.test_user = self.retirement.user
+
+        UserOrgTag.objects.create(user=self.test_user, key='email-optin', org="foo", value="True")
+        UserOrgTag.objects.create(user=self.test_user, key='email-optin', org="bar", value="True")
+
+        self.url = reverse('accounts_retire_mailings')
+
+    def build_jwt_headers(self, user):
+        """
+        Helper function for creating headers for the JWT authentication.
+        """
+        token = JwtBuilder(user).build_token([])
+        headers = {
+            'HTTP_AUTHORIZATION': 'JWT ' + token
+        }
+        return headers
+
+    def build_post(self, user):
+        return {'username': user.username}
+
+    def assert_status_and_tag_count(self, headers, expected_status=status.HTTP_204_NO_CONTENT, expected_tag_count=2,
+                                    expected_tag_value="False", expected_content=None):
+        """
+        Helper function for making a request to the retire subscriptions endpoint, and asserting the status.
+        """
+        response = self.client.post(self.url, self.build_post(self.test_user), **headers)
+
+        self.assertEqual(response.status_code, expected_status)
+
+        # Check that the expected number of tags with the correct value exist
+        tag_count = UserOrgTag.objects.filter(user=self.test_user, value=expected_tag_value).count()
+        self.assertEqual(tag_count, expected_tag_count)
+
+        if expected_content:
+            self.assertEqual(response.content.strip('"'), expected_content)
+
+    def test_superuser_retires_user_subscriptions(self):
+        """
+        Verify a user's subscriptions are retired when a superuser posts to the retire subscriptions endpoint.
+        """
+        headers = self.build_jwt_headers(self.test_superuser)
+        self.assert_status_and_tag_count(headers)
+
+    def test_superuser_retires_user_subscriptions_no_orgtags(self):
+        """
+        Verify the call succeeds when the user doesn't have any org tags.
+        """
+        UserOrgTag.objects.all().delete()
+        headers = self.build_jwt_headers(self.test_superuser)
+        self.assert_status_and_tag_count(headers, expected_tag_count=0)
+
+    def test_unauthorized_rejection(self):
+        """
+        Verify unauthorized users cannot retire subscriptions.
+        """
+        headers = self.build_jwt_headers(self.test_user)
+
+        # User should still have 2 "True" subscriptions.
+        self.assert_status_and_tag_count(headers, expected_status=status.HTTP_403_FORBIDDEN, expected_tag_value="True")
+
+    def test_signal_failure(self):
+        """
+        Verify that if a signal fails the transaction is rolled back and a proper error message is returned.
+        """
+        headers = self.build_jwt_headers(self.test_superuser)
+
+        mock_handler = mock.MagicMock()
+        mock_handler.side_effect = Exception("Tango")
+
+        try:
+            USER_RETIRE_MAILINGS.connect(mock_handler)
+
+            # User should still have 2 "True" subscriptions.
+            self.assert_status_and_tag_count(
+                headers,
+                expected_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                expected_tag_value="True",
+                expected_content="Tango"
+            )
+        finally:
+            USER_RETIRE_MAILINGS.disconnect(mock_handler)
+
+
+@unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Account APIs are only supported in LMS')
 class TestAccountRetirementList(RetirementTestCase):
     """
     Tests the account retirement endpoint.
@@ -1227,7 +1283,6 @@ class TestAccountRetirementList(RetirementTestCase):
         self.headers = self.build_jwt_headers(self.test_superuser)
         self.url = reverse('accounts_retirement_queue')
         self.maxDiff = None
-        self.setup_states()
 
     def assert_status_and_user_list(
             self,
@@ -1250,7 +1305,7 @@ class TestAccountRetirementList(RetirementTestCase):
             except AttributeError:
                 states_to_request = states_to_request
 
-        data = {'cool_off_days': cool_off_days, 'states': ','.join(states_to_request)}
+        data = {'cool_off_days': cool_off_days, 'states': states_to_request}
         response = self.client.get(self.url, data, **self.headers)
         self.assertEqual(response.status_code, expected_status)
         response_data = response.json()
@@ -1277,6 +1332,18 @@ class TestAccountRetirementList(RetirementTestCase):
         for state in self._get_dead_end_states():
             self._create_retirement(state)
         self.assert_status_and_user_list([], states_to_request=self._get_non_dead_end_states())
+
+    def test_users_retrieved_in_multiple_states(self):
+        """
+        Verify that if multiple states are requested, learners in each state are returned.
+        """
+        multiple_states = ['PENDING', 'FORUMS_COMPLETE']
+        for state in multiple_states:
+            self._create_retirement(RetirementState.objects.get(state_name=state))
+        data = {'cool_off_days': 0, 'states': multiple_states}
+        response = self.client.get(self.url, data, **self.headers)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.json()), 2)
 
     def test_users_exist(self):
         """
@@ -1371,7 +1438,6 @@ class TestAccountRetirementRetrieve(RetirementTestCase):
         self.url = reverse('accounts_retirement_retrieve', kwargs={'username': self.test_user.username})
         self.headers = self.build_jwt_headers(self.test_superuser)
         self.maxDiff = None
-        self.setup_states()
 
     def assert_status_and_user_data(self, expected_data, expected_status=status.HTTP_200_OK, username_to_find=None):
         """
@@ -1438,7 +1504,6 @@ class TestAccountRetirementUpdate(RetirementTestCase):
     """
     def setUp(self):
         super(TestAccountRetirementUpdate, self).setUp()
-        self.setup_states()
         self.pending_state = RetirementState.objects.get(state_name='PENDING')
         self.locking_state = RetirementState.objects.get(state_name='LOCKING_ACCOUNT')
 
@@ -1446,7 +1511,7 @@ class TestAccountRetirementUpdate(RetirementTestCase):
         self.test_user = self.retirement.user
         self.test_superuser = SuperuserFactory()
         self.headers = self.build_jwt_headers(self.test_superuser)
-        self.headers['content_type'] = "application/merge-patch+json"
+        self.headers['content_type'] = "application/json"
         self.url = reverse('accounts_retirement_update')
 
     def update_and_assert_status(self, data, expected_status=status.HTTP_204_NO_CONTENT):
@@ -1574,3 +1639,417 @@ class TestAccountRetirementUpdate(RetirementTestCase):
         # Should already be in 'PENDING'
         data = {'new_state': 'PENDING', 'response': 'this should fail'}
         self.update_and_assert_status(data, status.HTTP_400_BAD_REQUEST)
+
+
+@unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Account APIs are only supported in LMS')
+class TestAccountRetirementPost(RetirementTestCase):
+    """
+    Tests the account retirement endpoint.
+    """
+    def setUp(self):
+        super(TestAccountRetirementPost, self).setUp()
+
+        self.test_user = UserFactory()
+        self.test_superuser = SuperuserFactory()
+        self.original_username = self.test_user.username
+        self.original_email = self.test_user.email
+        self.retired_username = get_retired_username_by_username(self.original_username)
+        self.retired_email = get_retired_email_by_email(self.original_email)
+
+        retirement_state = RetirementState.objects.get(state_name='RETIRING_LMS')
+        self.retirement_status = UserRetirementStatus.create_retirement(self.test_user)
+        self.retirement_status.current_state = retirement_state
+        self.retirement_status.last_state = retirement_state
+        self.retirement_status.save()
+
+        SocialLink.objects.create(
+            user_profile=self.test_user.profile,
+            platform='Facebook',
+            social_link='www.facebook.com'
+        ).save()
+
+        self.cache_key = UserProfile.country_cache_key_name(self.test_user.id)
+        cache.set(self.cache_key, 'Timor-leste')
+
+        # Enterprise model setup
+        self.course_id = 'course-v1:edX+DemoX.1+2T2017'
+        self.enterprise_customer = EnterpriseCustomer.objects.create(
+            name='test_enterprise_customer',
+            site=SiteFactory.create()
+        )
+        self.enterprise_user = EnterpriseCustomerUser.objects.create(
+            enterprise_customer=self.enterprise_customer,
+            user_id=self.test_user.id,
+        )
+        self.enterprise_enrollment = EnterpriseCourseEnrollment.objects.create(
+            enterprise_customer_user=self.enterprise_user,
+            course_id=self.course_id
+        )
+        self.pending_enterprise_user = PendingEnterpriseCustomerUser.objects.create(
+            enterprise_customer_id=self.enterprise_user.enterprise_customer_id,
+            user_email=self.test_user.email
+        )
+        self.sapsf_audit = SapSuccessFactorsLearnerDataTransmissionAudit.objects.create(
+            sapsf_user_id=self.test_user.id,
+            enterprise_course_enrollment_id=self.enterprise_enrollment.id,
+            completed_timestamp=1,
+        )
+        self.consent = DataSharingConsent.objects.create(
+            username=self.test_user.username,
+            enterprise_customer=self.enterprise_customer,
+        )
+
+        # Entitlement model setup
+        self.entitlement = CourseEntitlementFactory.create(user=self.test_user)
+        self.entitlement_support_detail = CourseEntitlementSupportDetail.objects.create(
+            entitlement=self.entitlement,
+            support_user=UserFactory(),
+            comments='A comment containing potential PII.'
+        )
+
+        # Misc. setup
+        self.photo_verification = SoftwareSecurePhotoVerificationFactory.create(user=self.test_user)
+        PendingEmailChangeFactory.create(user=self.test_user)
+        UserOrgTagFactory.create(user=self.test_user, key='foo', value='bar')
+        UserOrgTagFactory.create(user=self.test_user, key='cat', value='dog')
+
+        CourseEnrollmentAllowedFactory.create(email=self.original_email)
+
+        self.course_key = CourseKey.from_string('course-v1:edX+DemoX+Demo_Course')
+        self.cohort = CourseUserGroup.objects.create(
+            name="TestCohort",
+            course_id=self.course_key,
+            group_type=CourseUserGroup.COHORT
+        )
+        self.cohort_assignment = UnregisteredLearnerCohortAssignments.objects.create(
+            course_user_group=self.cohort,
+            course_id=self.course_key,
+            email=self.original_email
+        )
+
+        # setup for doing POST from test client
+        self.headers = self.build_jwt_headers(self.test_superuser)
+        self.headers['content_type'] = "application/json"
+        self.url = reverse('accounts_retire')
+
+    def post_and_assert_status(self, data, expected_status=status.HTTP_204_NO_CONTENT):
+        """
+        Helper function for making a request to the retire subscriptions endpoint, and asserting the status.
+        """
+        response = self.client.post(self.url, json.dumps(data), **self.headers)
+        self.assertEqual(response.status_code, expected_status)
+        return response
+
+    def test_user_profile_pii_has_expected_values(self):
+        expected_user_profile_pii = {
+            'name': '',
+            'meta': '',
+            'location': '',
+            'year_of_birth': None,
+            'gender': None,
+            'mailing_address': None,
+            'city': None,
+            'country': None,
+            'bio': None,
+        }
+        self.assertEqual(expected_user_profile_pii, USER_PROFILE_PII)
+
+    def test_retire_user_where_user_does_not_exist(self):
+        path = 'openedx.core.djangoapps.user_api.accounts.views.is_username_retired'
+        with mock.patch(path, return_value=False) as mock_retired_username:
+            data = {'username': 'not_a_user'}
+            response = self.post_and_assert_status(data, status.HTTP_404_NOT_FOUND)
+            self.assertFalse(response.content)
+            mock_retired_username.assert_called_once_with('not_a_user')
+
+    def test_retire_user_server_error_is_raised(self):
+        path = 'openedx.core.djangoapps.user_api.models.UserRetirementStatus.get_retirement_for_retirement_action'
+        with mock.patch(path, side_effect=Exception('Unexpected Exception')) as mock_get_retirement:
+            data = {'username': self.test_user.username}
+            response = self.post_and_assert_status(data, status.HTTP_500_INTERNAL_SERVER_ERROR)
+            self.assertEqual('Unexpected Exception', text_type(response.json()))
+            mock_get_retirement.assert_called_once_with(self.original_username)
+
+    def test_retire_user_where_user_already_retired(self):
+        path = 'openedx.core.djangoapps.user_api.accounts.views.is_username_retired'
+        with mock.patch(path, return_value=True) as mock_is_username_retired:
+            data = {'username': self.test_user.username}
+            response = self.post_and_assert_status(data, status.HTTP_404_NOT_FOUND)
+            self.assertFalse(response.content)
+            mock_is_username_retired.assert_called_once_with(self.original_username)
+
+    def test_retire_user_where_username_not_provided(self):
+        response = self.post_and_assert_status({}, status.HTTP_404_NOT_FOUND)
+        expected_response_message = {'message': text_type('The user was not specified.')}
+        self.assertEqual(expected_response_message, response.json())
+
+    @mock.patch('openedx.core.djangoapps.user_api.accounts.views.get_profile_image_names')
+    @mock.patch('openedx.core.djangoapps.user_api.accounts.views.remove_profile_images')
+    def test_retire_user(self, mock_remove_profile_images, mock_get_profile_image_names):
+        data = {'username': self.original_username}
+        self.post_and_assert_status(data)
+
+        self.test_user.refresh_from_db()
+        self.test_user.profile.refresh_from_db()  # pylint: disable=no-member
+
+        expected_user_values = {
+            'first_name': '',
+            'last_name': '',
+            'is_active': False,
+            'username': self.retired_username,
+        }
+        for field, expected_value in expected_user_values.iteritems():
+            self.assertEqual(expected_value, getattr(self.test_user, field))
+
+        for field, expected_value in USER_PROFILE_PII.iteritems():
+            self.assertEqual(expected_value, getattr(self.test_user.profile, field))
+
+        self.assertIsNone(self.test_user.profile.profile_image_uploaded_at)
+        mock_get_profile_image_names.assert_called_once_with(self.original_username)
+        mock_remove_profile_images.assert_called_once_with(
+            mock_get_profile_image_names.return_value
+        )
+
+        self.assertFalse(
+            SocialLink.objects.filter(user_profile=self.test_user.profile).exists()
+        )
+
+        self.assertIsNone(cache.get(self.cache_key))
+
+        self._data_sharing_consent_assertions()
+        self._sapsf_audit_assertions()
+        self._pending_enterprise_customer_user_assertions()
+        self._entitlement_support_detail_assertions()
+
+        self._photo_verification_assertions()
+        self.assertFalse(PendingEmailChange.objects.filter(user=self.test_user).exists())
+        self.assertFalse(UserOrgTag.objects.filter(user=self.test_user).exists())
+
+        self.assertFalse(CourseEnrollmentAllowed.objects.filter(email=self.original_email).exists())
+        self.assertFalse(UnregisteredLearnerCohortAssignments.objects.filter(email=self.original_email).exists())
+
+    def test_deletes_pii_from_user_profile(self):
+        for model_field, value_to_assign in USER_PROFILE_PII.iteritems():
+            if value_to_assign == '':
+                value = 'foo'
+            else:
+                value = mock.Mock()
+            setattr(self.test_user.profile, model_field, value)
+
+        AccountRetirementView.clear_pii_from_userprofile(self.test_user)
+
+        for model_field, value_to_assign in USER_PROFILE_PII.iteritems():
+            self.assertEqual(value_to_assign, getattr(self.test_user.profile, model_field))
+
+        social_links = SocialLink.objects.filter(
+            user_profile=self.test_user.profile
+        )
+        self.assertFalse(social_links.exists())
+
+    @mock.patch('openedx.core.djangoapps.user_api.accounts.views.get_profile_image_names')
+    @mock.patch('openedx.core.djangoapps.user_api.accounts.views.remove_profile_images')
+    def test_removes_user_profile_images(
+        self, mock_remove_profile_images, mock_get_profile_image_names
+    ):
+        test_datetime = datetime.datetime(2018, 1, 1)
+        self.test_user.profile.profile_image_uploaded_at = test_datetime
+
+        AccountRetirementView.delete_users_profile_images(self.test_user)
+
+        self.test_user.profile.refresh_from_db()  # pylint: disable=no-member
+
+        self.assertIsNone(self.test_user.profile.profile_image_uploaded_at)
+        mock_get_profile_image_names.assert_called_once_with(self.test_user.username)
+        mock_remove_profile_images.assert_called_once_with(
+            mock_get_profile_image_names.return_value
+        )
+
+    def test_can_delete_user_profiles_country_cache(self):
+        AccountRetirementView.delete_users_country_cache(self.test_user)
+        self.assertIsNone(cache.get(self.cache_key))
+
+    def test_can_retire_users_datasharingconsent(self):
+        AccountRetirementView.retire_users_data_sharing_consent(self.test_user.username, self.retired_username)
+        self._data_sharing_consent_assertions()
+
+    def _data_sharing_consent_assertions(self):
+        """
+        Helper method for asserting that ``DataSharingConsent`` objects are retired.
+        """
+        self.consent.refresh_from_db()
+        self.assertEqual(self.retired_username, self.consent.username)
+        test_users_data_sharing_consent = DataSharingConsent.objects.filter(
+            username=self.original_username
+        )
+        self.assertFalse(test_users_data_sharing_consent.exists())
+
+    def test_can_retire_users_sap_success_factors_audits(self):
+        AccountRetirementView.retire_sapsf_data_transmission(self.test_user)
+        self._sapsf_audit_assertions()
+
+    def _sapsf_audit_assertions(self):
+        """
+        Helper method for asserting that ``SapSuccessFactorsLearnerDataTransmissionAudit`` objects are retired.
+        """
+        self.sapsf_audit.refresh_from_db()
+        self.assertEqual('', self.sapsf_audit.sapsf_user_id)
+        audits_for_original_user_id = SapSuccessFactorsLearnerDataTransmissionAudit.objects.filter(
+            sapsf_user_id=self.test_user.id,
+        )
+        self.assertFalse(audits_for_original_user_id.exists())
+
+    def test_can_retire_user_from_pendingenterprisecustomeruser(self):
+        AccountRetirementView.retire_user_from_pending_enterprise_customer_user(self.test_user, self.retired_email)
+        self._pending_enterprise_customer_user_assertions()
+
+    def _pending_enterprise_customer_user_assertions(self):
+        """
+        Helper method for asserting that ``PendingEnterpriseCustomerUser`` objects are retired.
+        """
+        self.pending_enterprise_user.refresh_from_db()
+        self.assertEqual(self.retired_email, self.pending_enterprise_user.user_email)
+        pending_enterprise_users = PendingEnterpriseCustomerUser.objects.filter(
+            user_email=self.original_email
+        )
+        self.assertFalse(pending_enterprise_users.exists())
+
+    def test_course_entitlement_support_detail_comments_are_retired(self):
+        AccountRetirementView.retire_entitlement_support_detail(self.test_user)
+        self._entitlement_support_detail_assertions()
+
+    def _entitlement_support_detail_assertions(self):
+        """
+        Helper method for asserting that ``CourseEntitleSupportDetail`` objects are retired.
+        """
+        self.entitlement_support_detail.refresh_from_db()
+        self.assertEqual('', self.entitlement_support_detail.comments)
+
+    def _photo_verification_assertions(self):
+        """
+        Helper method for asserting that ``SoftwareSecurePhotoVerification`` objects are retired.
+        """
+        self.photo_verification.refresh_from_db()
+        self.assertEqual(self.test_user, self.photo_verification.user)
+        for field in ('name', 'face_image_url', 'photo_id_image_url', 'photo_id_key'):
+            self.assertEqual('', getattr(self.photo_verification, field))
+
+
+@unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Account APIs are only supported in LMS')
+class TestLMSAccountRetirementPost(RetirementTestCase, ModuleStoreTestCase):
+    """
+    Tests the LMS account retirement (GDPR P2) endpoint.
+    """
+    def setUp(self):
+        super(TestLMSAccountRetirementPost, self).setUp()
+        self.pii_standin = 'PII here'
+        self.course = CourseFactory()
+        self.test_user = UserFactory()
+        self.test_superuser = SuperuserFactory()
+        self.original_username = self.test_user.username
+        self.original_email = self.test_user.email
+        self.retired_username = get_retired_username_by_username(self.original_username)
+        self.retired_email = get_retired_email_by_email(self.original_email)
+
+        retirement_state = RetirementState.objects.get(state_name='RETIRING_LMS')
+        self.retirement_status = UserRetirementStatus.create_retirement(self.test_user)
+        self.retirement_status.current_state = retirement_state
+        self.retirement_status.last_state = retirement_state
+        self.retirement_status.save()
+
+        # wiki data setup
+        rp = RevisionPlugin.objects.create(article_id=0)
+        RevisionPluginRevision.objects.create(
+            revision_number=1,
+            ip_address="ipaddresss",
+            plugin=rp,
+            user=self.test_user,
+        )
+        article = Article.objects.create()
+        ArticleRevision.objects.create(ip_address="ipaddresss", user=self.test_user, article=article)
+
+        # ManualEnrollmentAudit setup
+        course_enrollment = CourseEnrollment.enroll(user=self.test_user, course_key=self.course.id)
+        ManualEnrollmentAudit.objects.create(
+            enrollment=course_enrollment, reason=self.pii_standin, enrolled_email=self.pii_standin
+        )
+
+        # CreditRequest and CreditRequirementStatus setup
+        provider = CreditProvider.objects.create(provider_id="Hogwarts")
+        credit_course = CreditCourse.objects.create(course_key=self.course.id)
+        CreditRequest.objects.create(
+            username=self.test_user.username,
+            course=credit_course,
+            provider_id=provider.id,
+            parameters={self.pii_standin},
+        )
+        req = CreditRequirement.objects.create(course_id=credit_course.id)
+        CreditRequirementStatus.objects.create(username=self.test_user.username, requirement=req)
+
+        # ApiAccessRequest setup
+        site = Site.objects.create()
+        ApiAccessRequest.objects.create(
+            user=self.test_user,
+            site=site,
+            website=self.pii_standin,
+            company_address=self.pii_standin,
+            company_name=self.pii_standin,
+            reason=self.pii_standin,
+        )
+
+        # SurveyAnswer setup
+        SurveyAnswer.objects.create(user=self.test_user, field_value=self.pii_standin, form_id=0)
+
+        # other setup
+        PendingNameChange.objects.create(user=self.test_user, new_name=self.pii_standin, rationale=self.pii_standin)
+        PasswordHistory.objects.create(user=self.test_user, password=self.pii_standin)
+
+        # setup for doing POST from test client
+        self.headers = self.build_jwt_headers(self.test_superuser)
+        self.headers['content_type'] = "application/json"
+        self.url = reverse('accounts_retire_misc')
+
+    def post_and_assert_status(self, data, expected_status=status.HTTP_204_NO_CONTENT):
+        """
+        Helper function for making a request to the retire subscriptions endpoint, and asserting the status.
+        """
+        response = self.client.post(self.url, json.dumps(data), **self.headers)
+        self.assertEqual(response.status_code, expected_status)
+        return response
+
+    def test_retire_user(self):
+        # check that rows that will not exist after retirement exist now
+        self.assertTrue(CreditRequest.objects.filter(username=self.test_user.username).exists())
+        self.assertTrue(CreditRequirementStatus.objects.filter(username=self.test_user.username).exists())
+        self.assertTrue(PendingNameChange.objects.filter(user=self.test_user).exists())
+
+        retirement = UserRetirementStatus.get_retirement_for_retirement_action(self.test_user.username)
+        data = {'username': self.original_username}
+        self.post_and_assert_status(data)
+
+        self.test_user.refresh_from_db()
+        self.test_user.profile.refresh_from_db()  # pylint: disable=no-member
+        self.assertEqual(RevisionPluginRevision.objects.get(user=self.test_user).ip_address, None)
+        self.assertEqual(ArticleRevision.objects.get(user=self.test_user).ip_address, None)
+        self.assertFalse(PendingNameChange.objects.filter(user=self.test_user).exists())
+        self.assertEqual(PasswordHistory.objects.get(user=self.test_user).password, '')
+
+        self.assertEqual(
+            ManualEnrollmentAudit.objects.get(
+                enrollment=CourseEnrollment.objects.get(user=self.test_user)
+            ).enrolled_email,
+            retirement.retired_email
+        )
+        self.assertFalse(CreditRequest.objects.filter(username=self.test_user.username).exists())
+        self.assertTrue(CreditRequest.objects.filter(username=retirement.retired_username).exists())
+        self.assertEqual(CreditRequest.objects.get(username=retirement.retired_username).parameters, {})
+
+        self.assertFalse(CreditRequirementStatus.objects.filter(username=self.test_user.username).exists())
+        self.assertTrue(CreditRequirementStatus.objects.filter(username=retirement.retired_username).exists())
+        self.assertEqual(CreditRequirementStatus.objects.get(username=retirement.retired_username).reason, {})
+
+        retired_api_access_request = ApiAccessRequest.objects.get(user=self.test_user)
+        self.assertEqual(retired_api_access_request.website, '')
+        self.assertEqual(retired_api_access_request.company_address, '')
+        self.assertEqual(retired_api_access_request.company_name, '')
+        self.assertEqual(retired_api_access_request.reason, '')
+        self.assertEqual(SurveyAnswer.objects.get(user=self.test_user).field_value, '')

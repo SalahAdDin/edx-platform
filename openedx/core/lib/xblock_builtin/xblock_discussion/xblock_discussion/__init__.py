@@ -6,7 +6,7 @@ import logging
 import urllib
 
 from django.contrib.staticfiles.storage import staticfiles_storage
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.utils.translation import get_language_bidi
 from xblock.completable import XBlockCompletionMode
 from xblock.core import XBlock
@@ -173,7 +173,7 @@ class DiscussionXBlock(XBlock, StudioEditableXBlockMixin, XmlParserMixin):
 
         login_msg = ''
 
-        if not self.django_user.is_authenticated():
+        if not self.django_user.is_authenticated:
             qs = urllib.urlencode({
                 'course_id': self.course_key,
                 'enrollment_action': 'enroll',

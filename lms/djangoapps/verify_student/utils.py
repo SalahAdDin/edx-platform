@@ -13,6 +13,7 @@ from django.utils.translation import ugettext as _
 
 from edxmako.shortcuts import render_to_string
 from openedx.core.djangoapps.site_configuration import helpers as configuration_helpers
+from sailthru import SailthruClient
 
 log = logging.getLogger(__name__)
 
@@ -78,20 +79,42 @@ def verification_for_datetime(deadline, candidates):
 def send_verification_status_email(context):
     """
     Send an email to inform learners about their verification status
+    using sailthru
     """
-    subject = context['subject']
-    message = render_to_string(context['message'], context['email_template_context'])
-    from_address = configuration_helpers.get_value('email_from_address', settings.DEFAULT_FROM_EMAIL)
-    to_address = context['email']
+    sailthru_client = SailthruClient(context['email_config'].sailthru_key, context['email_config'].sailthru_secret)
+    sailthru_response = sailthru_client.send(
+        email=context['email'], template=context['template'],
+        _vars=context['template_vars']
+    )
+    if not sailthru_response.is_ok():
+        error = sailthru_response.get_error()
+        log.error("Error attempting to send verification status email to user: {} via Sailthru: {}".format(
+            context['email'], error.get_message()
+        ))
 
-    try:
-        send_mail(subject, message, from_address, [to_address], fail_silently=False)
-    except:  # pylint: disable=bare-except
-        # We catch all exceptions and log them.
-        # It would be much, much worse to roll back the transaction due to an uncaught
-        # exception than to skip sending the notification email.
-        log.exception(
-            _("Could not send verification status email having subject: {subject} and email of user: {email}").format(
-                subject=context['subject'],
-                email=context['email']
-            ))
+
+def most_recent_verification(photo_id_verifications, sso_id_verifications, most_recent_key):
+    """
+    Return the most recent verification given querysets for both photo and sso verifications.
+
+    Arguments:
+            photo_id_verifications: Queryset containing photo verifications
+            sso_id_verifications: Queryset containing sso verifications
+            most_recent_key: Either 'updated_at' or 'created_at'
+
+    Returns:
+        The most recent verification.
+    """
+    photo_id_verification = photo_id_verifications and photo_id_verifications.first()
+    sso_id_verification = sso_id_verifications and sso_id_verifications.first()
+
+    if not photo_id_verification and not sso_id_verification:
+        return None
+    elif photo_id_verification and not sso_id_verification:
+        return photo_id_verification
+    elif sso_id_verification and not photo_id_verification:
+        return sso_id_verification
+    elif getattr(photo_id_verification, most_recent_key) > getattr(sso_id_verification, most_recent_key):
+        return photo_id_verification
+    else:
+        return sso_id_verification

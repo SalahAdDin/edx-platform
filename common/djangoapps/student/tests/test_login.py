@@ -8,7 +8,7 @@ import httpretty
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.cache import cache
-from django.core.urlresolvers import NoReverseMatch, reverse
+from django.urls import NoReverseMatch, reverse
 from django.http import HttpResponse, HttpResponseBadRequest
 from django.test import TestCase
 from django.test.client import Client
@@ -19,8 +19,11 @@ from social_django.models import UserSocialAuth
 
 from openedx.core.djangoapps.external_auth.models import ExternalAuthMap
 from openedx.core.djangoapps.user_api.config.waffle import PREVENT_AUTH_USER_WRITES, waffle
+from openedx.core.djangoapps.password_policy.compliance import (
+    NonCompliantPasswordException,
+    NonCompliantPasswordWarning
+)
 from openedx.core.djangolib.testing.utils import CacheIsolationTestCase
-from openedx.tests.util import expected_redirect_url
 from student.tests.factories import RegistrationFactory, UserFactory, UserProfileFactory
 from student.views import login_oauth_token
 from third_party_auth.tests.utils import (
@@ -432,6 +435,51 @@ class LoginTest(CacheIsolationTestCase):
         self.assertIsNone(response_content["redirect_url"])
         self._assert_response(response, success=True)
 
+    @override_settings(PASSWORD_POLICY_COMPLIANCE_ROLLOUT_CONFIG={'ENFORCE_COMPLIANCE_ON_LOGIN': True})
+    def test_check_password_policy_compliance(self):
+        """
+        Tests _enforce_password_policy_compliance succeeds when no exception is thrown
+        """
+        with patch('student.views.login.password_policy_compliance.enforce_compliance_on_login') as mock_check_password_policy_compliance:
+            mock_check_password_policy_compliance.return_value = HttpResponse()
+            response, _ = self._login_response(
+                'test@edx.org',
+                'test_password',
+            )
+            response_content = json.loads(response.content)
+        self.assertTrue(response_content.get('success'))
+
+    @override_settings(PASSWORD_POLICY_COMPLIANCE_ROLLOUT_CONFIG={'ENFORCE_COMPLIANCE_ON_LOGIN': True})
+    def test_check_password_policy_compliance_exception(self):
+        """
+        Tests _enforce_password_policy_compliance fails with an exception thrown
+        """
+        with patch('student.views.login.password_policy_compliance.enforce_compliance_on_login') as \
+                mock_enforce_compliance_on_login:
+            mock_enforce_compliance_on_login.side_effect = NonCompliantPasswordException()
+            response, _ = self._login_response(
+                'test@edx.org',
+                'test_password'
+            )
+            response_content = json.loads(response.content)
+        self.assertFalse(response_content.get('success'))
+
+    @override_settings(PASSWORD_POLICY_COMPLIANCE_ROLLOUT_CONFIG={'ENFORCE_COMPLIANCE_ON_LOGIN': True})
+    def test_check_password_policy_compliance_warning(self):
+        """
+        Tests _enforce_password_policy_compliance succeeds with a warning thrown
+        """
+        with patch('student.views.login.password_policy_compliance.enforce_compliance_on_login') as \
+                mock_enforce_compliance_on_login:
+            mock_enforce_compliance_on_login.side_effect = NonCompliantPasswordWarning('Test warning')
+            response, _ = self._login_response(
+                'test@edx.org',
+                'test_password'
+            )
+            response_content = json.loads(response.content)
+            self.assertIn('Test warning', self.client.session['_messages'])
+        self.assertTrue(response_content.get('success'))
+
     def _login_response(self, email, password, patched_audit_log='student.views.AUDIT_LOG', extra_post_params=None):
         """
         Post the login info
@@ -548,7 +596,7 @@ class ExternalAuthShibTest(ModuleStoreTestCase):
         """
         response = self.client.get(reverse('dashboard'))
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response['Location'], expected_redirect_url('/login?next=/dashboard'))
+        self.assertEqual(response['Location'], '/login?next=/dashboard')
 
     @unittest.skipUnless(settings.FEATURES.get('AUTH_USE_SHIB'), "AUTH_USE_SHIB not set")
     def test_externalauth_login_required_course_context(self):
@@ -559,7 +607,7 @@ class ExternalAuthShibTest(ModuleStoreTestCase):
         target_url = reverse('courseware', args=[text_type(self.course.id)])
         noshib_response = self.client.get(target_url, follow=True, HTTP_ACCEPT="text/html")
         self.assertEqual(noshib_response.redirect_chain[-1],
-                         (expected_redirect_url('/login?next={url}'.format(url=target_url)), 302))
+                         ('/login?next={url}'.format(url=target_url), 302))
         self.assertContains(noshib_response, (u"Sign in or Register | {platform_name}"
                                               .format(platform_name=settings.PLATFORM_NAME)))
         self.assertEqual(noshib_response.status_code, 200)
@@ -574,9 +622,9 @@ class ExternalAuthShibTest(ModuleStoreTestCase):
         # The 'courseware' page actually causes a redirect itself, so it's not the end of the chain and we
         # won't test its contents
         self.assertEqual(shib_response.redirect_chain[-3],
-                         (expected_redirect_url('/shib-login/?next={url}'.format(url=target_url_shib)), 302))
+                         ('/shib-login/?next={url}'.format(url=target_url_shib), 302))
         self.assertEqual(shib_response.redirect_chain[-2],
-                         (expected_redirect_url(target_url_shib), 302))
+                         (target_url_shib, 302))
         self.assertEqual(shib_response.status_code, 200)
 
 

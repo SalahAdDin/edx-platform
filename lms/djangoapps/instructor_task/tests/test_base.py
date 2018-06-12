@@ -12,7 +12,7 @@ from uuid import uuid4
 import unicodecsv
 from celery.states import FAILURE, SUCCESS
 from django.contrib.auth.models import User
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from mock import Mock, patch
 from opaque_keys.edx.locations import Location
 from opaque_keys.edx.keys import CourseKey
@@ -233,12 +233,12 @@ class InstructorTaskModuleTestCase(InstructorTaskCourseTestCase):
         factory = OptionResponseXMLFactory()
         factory_args = self._option_problem_factory_args()
         problem_xml = factory.build_xml(**factory_args)
-        ItemFactory.create(parent_location=parent.location,
-                           parent=parent,
-                           category="problem",
-                           display_name=problem_url_name,
-                           data=problem_xml,
-                           **kwargs)
+        return ItemFactory.create(parent_location=parent.location,
+                                  parent=parent,
+                                  category="problem",
+                                  display_name=problem_url_name,
+                                  data=problem_xml,
+                                  **kwargs)
 
     def redefine_option_problem(self, problem_url_name, correct_answer=OPTION_1, num_inputs=1, num_responses=2):
         """Change the problem definition so the answer is Option 2"""
@@ -303,6 +303,8 @@ class TestReportMixin(object):
     """
     Cleans up after tests that place files in the reports directory.
     """
+    shard = 4
+
     def setUp(self):
 
         def clean_up_tmpdir():

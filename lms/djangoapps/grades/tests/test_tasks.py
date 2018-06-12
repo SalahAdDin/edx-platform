@@ -10,11 +10,11 @@ from datetime import datetime, timedelta
 import ddt
 import pytz
 import six
-import django
 from django.conf import settings
 from django.db.utils import IntegrityError
 from mock import MagicMock, patch
 
+from lms.djangoapps.grades import tasks
 from lms.djangoapps.grades.config.models import PersistentGradesEnabledFlag
 from lms.djangoapps.grades.constants import ScoreDatabaseTableEnum
 from lms.djangoapps.grades.models import PersistentCourseGrade, PersistentSubsectionGrade
@@ -40,6 +40,9 @@ from .utils import mock_get_score
 
 
 class MockGradesService(GradesService):
+    """
+    A mock grades service.
+    """
     def __init__(self, mocked_return_value=None):
         super(MockGradesService, self).__init__()
         self.mocked_return_value = mocked_return_value
@@ -56,7 +59,6 @@ class HasCourseWithProblemsMixin(object):
         """
         Configures the course for this test.
         """
-        # pylint: disable=attribute-defined-outside-init,no-member
         self.course = CourseFactory.create(
             org='edx',
             name='course',
@@ -108,34 +110,13 @@ class HasCourseWithProblemsMixin(object):
         # pylint: enable=attribute-defined-outside-init,no-member
 
 
-# TODO: Remove Django 1.11 upgrade shim
-# SHIM: Django 1.11 results in a few more SAVEPOINTs due to:
-# https://github.com/django/django/commit/d44afd88#diff-5b0dda5eb9a242c15879dc9cd2121379L485
-# Get rid of this logic post-upgrade.
-def _recalc_expected_query_counts():
-    if django.VERSION >= (1, 11):
-        return 27
-    else:
-        return 23
-
-
-# TODO: Remove Django 1.11 upgrade shim
-# SHIM: Django 1.11 results in a few more SAVEPOINTs due to:
-# https://github.com/django/django/commit/d44afd88#diff-5b0dda5eb9a242c15879dc9cd2121379L485
-# Get rid of this logic post-upgrade.
-def _recalc_persistent_expected_query_counts():
-    if django.VERSION >= (1, 11):
-        return 28
-    else:
-        return 24
-
-
 @patch.dict(settings.FEATURES, {'PERSISTENT_GRADES_ENABLED_FOR_ALL_TESTS': False})
 @ddt.ddt
 class RecalculateSubsectionGradeTest(HasCourseWithProblemsMixin, ModuleStoreTestCase):
     """
     Ensures that the recalculate subsection grade task functions as expected when run.
     """
+    shard = 4
     ENABLED_SIGNALS = ['course_published', 'pre_publish']
 
     def setUp(self):
@@ -187,10 +168,10 @@ class RecalculateSubsectionGradeTest(HasCourseWithProblemsMixin, ModuleStoreTest
             self.assertEquals(mock_block_structure_create.call_count, 1)
 
     @ddt.data(
-        (ModuleStoreEnum.Type.mongo, 1, _recalc_expected_query_counts(), True),
-        (ModuleStoreEnum.Type.mongo, 1, _recalc_expected_query_counts(), False),
-        (ModuleStoreEnum.Type.split, 3, _recalc_expected_query_counts(), True),
-        (ModuleStoreEnum.Type.split, 3, _recalc_expected_query_counts(), False),
+        (ModuleStoreEnum.Type.mongo, 1, 27, True),
+        (ModuleStoreEnum.Type.mongo, 1, 27, False),
+        (ModuleStoreEnum.Type.split, 3, 27, True),
+        (ModuleStoreEnum.Type.split, 3, 27, False),
     )
     @ddt.unpack
     def test_query_counts(self, default_store, num_mongo_calls, num_sql_calls, create_multiple_subsections):
@@ -202,8 +183,8 @@ class RecalculateSubsectionGradeTest(HasCourseWithProblemsMixin, ModuleStoreTest
                     self._apply_recalculate_subsection_grade()
 
     @ddt.data(
-        (ModuleStoreEnum.Type.mongo, 1, _recalc_expected_query_counts()),
-        (ModuleStoreEnum.Type.split, 3, _recalc_expected_query_counts()),
+        (ModuleStoreEnum.Type.mongo, 1, 27),
+        (ModuleStoreEnum.Type.split, 3, 27),
     )
     @ddt.unpack
     def test_query_counts_dont_change_with_more_content(self, default_store, num_mongo_calls, num_sql_calls):
@@ -233,7 +214,7 @@ class RecalculateSubsectionGradeTest(HasCourseWithProblemsMixin, ModuleStoreTest
         # So in total, 3 sequential parents, with one inaccessible.
         for sequential in (accessible_seq, inaccessible_seq):
             sequential.children = [self.problem.location]
-            modulestore().update_item(sequential, self.user.id)  # pylint: disable=no-member
+            modulestore().update_item(sequential, self.user.id)
 
         # Make sure the signal is sent for only the 2 accessible sequentials.
         self._apply_recalculate_subsection_grade()
@@ -263,8 +244,8 @@ class RecalculateSubsectionGradeTest(HasCourseWithProblemsMixin, ModuleStoreTest
             self.assertEqual(len(PersistentSubsectionGrade.bulk_read_grades(self.user.id, self.course.id)), 0)
 
     @ddt.data(
-        (ModuleStoreEnum.Type.mongo, 1, _recalc_persistent_expected_query_counts()),
-        (ModuleStoreEnum.Type.split, 3, _recalc_persistent_expected_query_counts()),
+        (ModuleStoreEnum.Type.mongo, 1, 28),
+        (ModuleStoreEnum.Type.split, 3, 28),
     )
     @ddt.unpack
     def test_persistent_grades_enabled_on_course(self, default_store, num_mongo_queries, num_sql_queries):
@@ -431,6 +412,7 @@ class ComputeGradesForCourseTest(HasCourseWithProblemsMixin, ModuleStoreTestCase
     """
     Test compute_grades_for_course_v2 task.
     """
+    shard = 4
 
     ENABLED_SIGNALS = ['course_published', 'pre_publish']
 
@@ -469,3 +451,50 @@ class ComputeGradesForCourseTest(HasCourseWithProblemsMixin, ModuleStoreTestCase
             self.assertEqual(batch_size, test_batch_size)
             self.assertEqual(offset, offset_expected)
             offset_expected += test_batch_size
+
+
+class RecalculateGradesForUserTest(HasCourseWithProblemsMixin, ModuleStoreTestCase):
+    """
+    Test recalculate_course_and_subsection_grades_for_user task.
+    """
+    def setUp(self):
+        super(RecalculateGradesForUserTest, self).setUp()
+        self.user = UserFactory.create()
+        self.set_up_course()
+        CourseEnrollment.enroll(self.user, self.course.id)
+
+    def test_recalculation_happy_path(self):
+        with patch('lms.djangoapps.grades.tasks.CourseGradeFactory') as mock_factory:
+            factory = mock_factory.return_value
+            factory.read.return_value = MagicMock(attempted=True)
+
+            kwargs = {
+                'user_id': self.user.id,
+                'course_key': six.text_type(self.course.id),
+            }
+
+            task_result = tasks.recalculate_course_and_subsection_grades_for_user.apply_async(kwargs=kwargs)
+            task_result.get()
+
+            factory.read.assert_called_once_with(self.user, course_key=self.course.id)
+            factory.update.assert_called_once_with(
+                user=self.user,
+                course_key=self.course.id,
+                force_update_subsections=True,
+            )
+
+    def test_recalculation_doesnt_happen_if_not_previously_attempted(self):
+        with patch('lms.djangoapps.grades.tasks.CourseGradeFactory') as mock_factory:
+            factory = mock_factory.return_value
+            factory.read.return_value = MagicMock(attempted=False)
+
+            kwargs = {
+                'user_id': self.user.id,
+                'course_key': six.text_type(self.course.id),
+            }
+
+            task_result = tasks.recalculate_course_and_subsection_grades_for_user.apply_async(kwargs=kwargs)
+            task_result.get()
+
+            factory.read.assert_called_once_with(self.user, course_key=self.course.id)
+            self.assertFalse(factory.update.called)

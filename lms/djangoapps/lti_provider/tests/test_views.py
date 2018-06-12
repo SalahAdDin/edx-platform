@@ -3,7 +3,7 @@ Tests for the LTI provider views
 """
 
 import pytest
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.test import TestCase
 from django.test.client import RequestFactory
 from mock import MagicMock, patch
@@ -182,7 +182,6 @@ class LtiLaunchTest(LtiTestMixin, TestCase):
 
 
 @attr(shard=3)
-@pytest.mark.django111_expected_failure
 class LtiLaunchTestRender(LtiTestMixin, RenderXBlockTestMixin, ModuleStoreTestCase):
     """
     Tests for the rendering returned by lti_launch view.

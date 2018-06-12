@@ -297,9 +297,103 @@ class RegisterFromCombinedPageTest(UniqueCourseTest):
             self.course_info['run'], self.course_info['display_name']
         ).install()
 
+    def test_register_success(self):
+        # Navigate to the registration page
+        self.register_page.visit()
+
+        # Fill in the form and submit it
+        username = "test_{uuid}".format(uuid=self.unique_id[0:6])
+        email = "{user}@example.com".format(user=username)
+        self.register_page.register(
+            email=email,
+            password="password",
+            username=username,
+            full_name="Test User",
+            country="US",
+            favorite_movie="Mad Max: Fury Road"
+        )
+
+        # Expect that we reach the dashboard and we're auto-enrolled in the course
+        course_names = self.dashboard_page.wait_for_page().available_courses
+        self.assertIn(self.course_info["display_name"], course_names)
+
+    def test_register_failure(self):
+        # Navigate to the registration page
+        self.register_page.visit()
+
+        # Enter a blank for the username field, which is required
+        # Don't agree to the terms of service / honor code.
+        # Don't specify a country code, which is required.
+        # Don't specify a favorite movie.
+        username = "test_{uuid}".format(uuid=self.unique_id[0:6])
+        email = "{user}@example.com".format(user=username)
+        self.register_page.register(
+            email=email,
+            password="password",
+            username="",
+            full_name="Test User"
+        )
+        # Verify that the expected errors are displayed.
+        errors = self.register_page.wait_for_errors()
+        self.assertIn(u'Please enter your Public Username.', errors)
+        self.assertIn(u'Select your country or region of residence.', errors)
+        self.assertIn(u'Please tell us your favorite movie.', errors)
+
     def test_toggle_to_login_form(self):
         self.register_page.visit().toggle_form()
         self.assertEqual(self.register_page.current_form, "login")
+
+    def test_third_party_register(self):
+        """
+        Test that we can register using third party credentials, and that the
+        third party account gets linked to the edX account.
+        """
+        # Navigate to the register page
+        self.register_page.visit()
+        # Baseline screen-shots are different for chrome and firefox.
+        #self.assertScreenshot('#register .login-providers', 'register-providers-{}'.format(self.browser.name), .25)
+        # The line above is commented out temporarily see SOL-1937
+
+        # Try to authenticate using the "Dummy" provider
+        self.register_page.click_third_party_dummy_provider()
+
+        # The user will be redirected somewhere and then back to the register page:
+        msg_text = self.register_page.wait_for_auth_status_message()
+        self.assertEqual(self.register_page.current_form, "register")
+        self.assertIn("You've successfully signed into Dummy", msg_text)
+        self.assertIn("We just need a little more information", msg_text)
+
+        # Now the form should be pre-filled with the data from the Dummy provider:
+        self.assertEqual(self.register_page.email_value, "adama@fleet.colonies.gov")
+        self.assertEqual(self.register_page.full_name_value, "William Adama")
+        self.assertIn("Galactica1", self.register_page.username_value)
+
+        # Set country and submit the form:
+        self.register_page.register(country="US", favorite_movie="Battlestar Galactica")
+
+        # Expect that we reach the dashboard and we're auto-enrolled in the course
+        course_names = self.dashboard_page.wait_for_page().available_courses
+        self.assertIn(self.course_info["display_name"], course_names)
+
+        # Now logout and check that we can log back in instantly (because the account is linked):
+        LogoutPage(self.browser).visit()
+
+        login_page = CombinedLoginAndRegisterPage(self.browser, start_page="login")
+        login_page.visit()
+        login_page.click_third_party_dummy_provider()
+
+        self.dashboard_page.wait_for_page()
+
+        # Now unlink the account (To test the account settings view and also to prevent cross-test side effects)
+        account_settings = AccountSettingsPage(self.browser).visit()
+        # switch to "Linked Accounts" tab
+        account_settings.switch_account_settings_tabs('accounts-tab')
+
+        field_id = "auth-oa2-dummy"
+        account_settings.wait_for_field(field_id)
+        self.assertEqual("Unlink This Account", account_settings.link_title_for_link_field(field_id))
+        account_settings.click_on_link_in_link_field(field_id)
+        account_settings.wait_for_message(field_id, "Successfully unlinked")
 
 
 @attr(shard=19)
@@ -332,33 +426,6 @@ class PayAndVerifyTest(EventsTestMixin, UniqueCourseTest):
 
         # Add a verified mode to the course
         ModeCreationPage(self.browser, self.course_id, mode_slug=u'verified', mode_display_name=u'Verified Certificate', min_price=10, suggested_prices='10,20').visit()
-
-    def test_immediate_verification_enrollment(self):
-        # Create a user and log them in
-        student_id = AutoAuthPage(self.browser).visit().get_user_id()
-
-        enroll_user_track(self.browser, self.course_id, 'verified')
-
-        # Proceed to verification
-        self.payment_and_verification_flow.immediate_verification()
-
-        # Take face photo and proceed to the ID photo step
-        self.payment_and_verification_flow.webcam_capture()
-        self.payment_and_verification_flow.next_verification_step(self.immediate_verification_page)
-
-        # Take ID photo and proceed to the review photos step
-        self.payment_and_verification_flow.webcam_capture()
-        self.payment_and_verification_flow.next_verification_step(self.immediate_verification_page)
-
-        # Submit photos and proceed to the enrollment confirmation step
-        self.payment_and_verification_flow.next_verification_step(self.immediate_verification_page)
-
-        # Navigate to the dashboard
-        self.dashboard_page.visit()
-
-        # Expect that we're enrolled as verified in the course
-        enrollment_mode = self.dashboard_page.get_enrollment_mode(self.course_info["display_name"])
-        self.assertEqual(enrollment_mode, 'verified')
 
     def test_deferred_verification_enrollment(self):
         # Create a user and log them in
@@ -690,33 +757,6 @@ class VisibleToStaffOnlyTest(UniqueCourseTest):
 
         self.course_home_page = CourseHomePage(self.browser, self.course_id)
         self.courseware_page = CoursewarePage(self.browser, self.course_id)
-
-    def test_visible_to_staff(self):
-        """
-        Scenario: All content is visible for a user marked is_staff (different from course staff)
-            Given some of the course content has been marked 'visible_to_staff_only'
-            And I am logged on with an account marked 'is_staff'
-            Then I can see all course content
-        """
-        AutoAuthPage(self.browser, username="STAFF_TESTER", email="johndoe_staff@example.com",
-                     course_id=self.course_id, staff=True).visit()
-
-        self.course_home_page.visit()
-        self.assertEqual(3, len(self.course_home_page.outline.sections['Test Section']))
-
-        self.course_home_page.outline.go_to_section("Test Section", "Subsection With Locked Unit")
-        self.courseware_page.wait_for_page()
-        self.assertEqual([u'Locked Unit', u'Unlocked Unit'], self.courseware_page.nav.sequence_items)
-
-        self.course_home_page.visit()
-        self.course_home_page.outline.go_to_section("Test Section", "Unlocked Subsection")
-        self.courseware_page.wait_for_page()
-        self.assertEqual([u'Test Unit'], self.courseware_page.nav.sequence_items)
-
-        self.course_home_page.visit()
-        self.course_home_page.outline.go_to_section("Test Section", "Locked Subsection")
-        self.courseware_page.wait_for_page()
-        self.assertEqual([u'Test Unit'], self.courseware_page.nav.sequence_items)
 
     def test_visible_to_student(self):
         """

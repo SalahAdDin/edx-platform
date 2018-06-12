@@ -8,7 +8,7 @@ from urllib import urlencode
 from uuid import uuid4
 
 from django.conf import settings
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.test.client import Client, RequestFactory
 from django.test.utils import override_settings
 from django.utils import translation
@@ -982,19 +982,6 @@ class CertificatesViewsTests(CommonCertificatesTestCase):
             year=expected_date.year
         )
         self.assertIn(date, response.content)
-
-    @override_settings(FEATURES=FEATURES_WITH_CERTS_ENABLED)
-    def test_render_html_view_invalid_certificate_configuration(self):
-        self.course.cert_html_view_enabled = True
-        self.course.save()
-        self.store.update_item(self.course, self.user.id)
-
-        test_url = get_certificate_url(
-            user_id=self.user.id,
-            course_id=unicode(self.course.id)
-        )
-        response = self.client.get(test_url)
-        self.assertIn("Invalid Certificate", response.content)
 
     @override_settings(FEATURES=FEATURES_WITH_CERTS_ENABLED)
     def test_render_500_view_invalid_certificate_configuration(self):

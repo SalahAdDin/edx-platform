@@ -12,6 +12,7 @@ You can then use the CourseFactory and XModuleItemFactory as defined
 in common/lib/xmodule/xmodule/modulestore/tests/factories.py to create
 the course, section, subsection, unit, etc.
 """
+import json
 import os
 import unittest
 import datetime
@@ -36,7 +37,7 @@ from xblock.fields import ScopeIds
 from xmodule.tests import get_test_descriptor_system
 from xmodule.validation import StudioValidationMessage
 from xmodule.video_module import VideoDescriptor, create_youtube_string, EXPORT_IMPORT_STATIC_DIR
-from xmodule.video_module.transcripts_utils import download_youtube_subs, save_to_store
+from xmodule.video_module.transcripts_utils import download_youtube_subs, save_to_store, save_subs_to_store
 from . import LogicTest
 from .test_import import DummySystem
 
@@ -120,6 +121,7 @@ class _MockValCannotCreateError(Exception):
 
 class VideoModuleTest(LogicTest):
     """Logic tests for Video Xmodule."""
+    shard = 1
     descriptor_class = VideoDescriptor
 
     raw_field_data = {
@@ -201,6 +203,8 @@ class VideoDescriptorTestBase(unittest.TestCase):
     """
     Base class for tests for VideoDescriptor
     """
+    shard = 1
+
     def setUp(self):
         super(VideoDescriptorTestBase, self).setUp()
         self.descriptor = instantiate_descriptor()
@@ -225,6 +229,8 @@ class TestCreateYoutubeString(VideoDescriptorTestBase):
     """
     Checks that create_youtube_string correcty extracts information from Video descriptor.
     """
+    shard = 1
+
     def test_create_youtube_string(self):
         """
         Test that Youtube ID strings are correctly created when writing back out to XML.
@@ -251,6 +257,8 @@ class TestCreateYouTubeUrl(VideoDescriptorTestBase):
     """
     Tests for helper method `create_youtube_url`.
     """
+    shard = 1
+
     def test_create_youtube_url_unicode(self):
         """
         Test that passing unicode to `create_youtube_url` doesn't throw
@@ -264,6 +272,8 @@ class VideoDescriptorImportTestCase(TestCase):
     """
     Make sure that VideoDescriptor can import an old XML-based video correctly.
     """
+    shard = 1
+
     def assert_attributes_equal(self, video, attrs):
         """
         Assert that `video` has the correct attributes. `attrs` is a map of {metadata_field: value}.
@@ -692,6 +702,8 @@ class VideoExportTestCase(VideoDescriptorTestBase):
     """
     Make sure that VideoDescriptor can export itself to XML correctly.
     """
+    shard = 1
+
     def setUp(self):
         super(VideoExportTestCase, self).setUp()
         self.temp_dir = mkdtemp()
@@ -704,7 +716,12 @@ class VideoExportTestCase(VideoDescriptorTestBase):
         Test that we write the correct XML on export.
         """
         edx_video_id = u'test_edx_video_id'
-        mock_val_api.export_to_xml = Mock(return_value=etree.Element('video_asset'))
+        mock_val_api.export_to_xml = Mock(
+            return_value=dict(
+                xml=etree.Element('video_asset'),
+                transcripts={}
+            )
+        )
         self.descriptor.youtube_id_0_75 = 'izygArpw-Qo'
         self.descriptor.youtube_id_1_0 = 'p2Q6BrNhdh8'
         self.descriptor.youtube_id_1_25 = '1EeWXzPdhSA'
@@ -724,14 +741,23 @@ class VideoExportTestCase(VideoDescriptorTestBase):
         xml = self.descriptor.definition_to_xml(self.file_system)
         parser = etree.XMLParser(remove_blank_text=True)
         xml_string = '''\
-         <video url_name="SampleProblem" start_time="0:00:01" youtube="0.75:izygArpw-Qo,1.00:p2Q6BrNhdh8,1.25:1EeWXzPdhSA,1.50:rABDYkeK0x8" show_captions="false" end_time="0:01:00" download_video="true" download_track="true">
+         <video
+            url_name="SampleProblem"
+            start_time="0:00:01"
+            show_captions="false"
+            end_time="0:01:00"
+            download_video="true"
+            download_track="true"
+            youtube="0.75:izygArpw-Qo,1.00:p2Q6BrNhdh8,1.25:1EeWXzPdhSA,1.50:rABDYkeK0x8"
+            transcripts='{"ge": "german_translation.srt", "ua": "ukrainian_translation.srt"}'
+         >
            <source src="http://www.example.com/source.mp4"/>
            <source src="http://www.example.com/source1.ogg"/>
            <track src="http://www.example.com/track"/>
            <handout src="http://www.example.com/handout"/>
+           <video_asset />
            <transcript language="ge" src="german_translation.srt" />
            <transcript language="ua" src="ukrainian_translation.srt" />
-           <video_asset />
          </video>
         '''
         expected = etree.XML(xml_string, parser=parser)
@@ -834,6 +860,7 @@ class VideoDescriptorStudentViewDataTestCase(unittest.TestCase):
     """
     Make sure that VideoDescriptor returns the expected student_view_data.
     """
+    shard = 1
 
     VIDEO_URL_1 = 'http://www.example.com/source_low.mp4'
     VIDEO_URL_2 = 'http://www.example.com/source_med.mp4'
@@ -900,22 +927,21 @@ class VideoDescriptorStudentViewDataTestCase(unittest.TestCase):
         ),
     )
     @ddt.unpack
-    @patch('xmodule.video_module.video_module.is_val_transcript_feature_enabled_for_course')
-    def test_student_view_data(self, field_data, expected_student_view_data, mock_transcript_feature):
+    def test_student_view_data(self, field_data, expected_student_view_data):
         """
         Ensure that student_view_data returns the expected results for video modules.
         """
-        mock_transcript_feature.return_value = False
         descriptor = instantiate_descriptor(**field_data)
         descriptor.runtime.course_id = MagicMock()
         student_view_data = descriptor.student_view_data()
         self.assertEquals(student_view_data, expected_student_view_data)
 
     @patch('xmodule.video_module.video_module.HLSPlaybackEnabledFlag.feature_enabled', Mock(return_value=True))
-    @patch('xmodule.video_module.video_module.is_val_transcript_feature_enabled_for_course', Mock(return_value=False))
+    @patch('xmodule.video_module.transcripts_utils.get_available_transcript_languages', Mock(return_value=['es']))
     @patch('edxval.api.get_video_info_for_course_and_profiles', Mock(return_value={}))
+    @patch('xmodule.video_module.transcripts_utils.get_video_transcript_content')
     @patch('edxval.api.get_video_info')
-    def test_student_view_data_with_hls_flag(self, mock_get_video_info):
+    def test_student_view_data_with_hls_flag(self, mock_get_video_info, mock_get_video_transcript_content):
         mock_get_video_info.return_value = {
             'url': '/edxval/video/example',
             'edx_video_id': u'example_id',
@@ -931,8 +957,18 @@ class VideoDescriptorStudentViewDataTestCase(unittest.TestCase):
             ]
         }
 
+        mock_get_video_transcript_content.return_value = {
+            'content': json.dumps({
+                "start": [10],
+                "end": [100],
+                "text": ["Hi, welcome to Edx."],
+            }),
+            'file_name': 'edx.sjson'
+        }
+
         descriptor = instantiate_descriptor(edx_video_id='example_id', only_on_web=False)
         descriptor.runtime.course_id = MagicMock()
+        descriptor.runtime.handler_url = MagicMock()
         student_view_data = descriptor.student_view_data()
         expected_video_data = {u'hls': {'url': u'http://www.meowmix.com', 'file_size': 25556}}
         self.assertDictEqual(student_view_data.get('encoded_videos'), expected_video_data)
@@ -977,6 +1013,8 @@ class VideoDescriptorIndexingTestCase(unittest.TestCase):
     """
     Make sure that VideoDescriptor can format data for indexing as expected.
     """
+    shard = 1
+
     def test_video_with_no_subs_index_dictionary(self):
         """
         Test index dictionary of a video module without subtitles.
@@ -1018,9 +1056,10 @@ class VideoDescriptorIndexingTestCase(unittest.TestCase):
               <handout src="http://www.example.com/handout"/>
             </video>
         '''
-
+        yt_subs_id = 'OEoXaMPEzfM'
         descriptor = instantiate_descriptor(data=xml_data_sub)
-        download_youtube_subs('OEoXaMPEzfM', descriptor, settings)
+        subs = download_youtube_subs(yt_subs_id, descriptor, settings)
+        save_subs_to_store(json.loads(subs), yt_subs_id, descriptor)
         self.assertEqual(descriptor.index_dictionary(), {
             "content": {
                 "display_name": "Test Video",
@@ -1049,9 +1088,10 @@ class VideoDescriptorIndexingTestCase(unittest.TestCase):
               <transcript language="ge" src="subs_grmtran1.srt" />
             </video>
         '''
-
+        yt_subs_id = 'OEoXaMPEzfM'
         descriptor = instantiate_descriptor(data=xml_data_sub_transcript)
-        download_youtube_subs('OEoXaMPEzfM', descriptor, settings)
+        subs = download_youtube_subs(yt_subs_id, descriptor, settings)
+        save_subs_to_store(json.loads(subs), yt_subs_id, descriptor)
         save_to_store(SRT_FILEDATA, "subs_grmtran1.srt", 'text/srt', descriptor.location)
         self.assertEqual(descriptor.index_dictionary(), {
             "content": {

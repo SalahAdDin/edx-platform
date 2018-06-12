@@ -17,7 +17,7 @@ import logging
 import ipaddr
 from config_models.models import ConfigurationModel
 from django.core.cache import cache
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.db import models
 from django.db.models.signals import post_delete, post_save
 from django.utils.translation import ugettext as _
@@ -428,12 +428,14 @@ class CountryAccessRule(models.Model):
 
     restricted_course = models.ForeignKey(
         "RestrictedCourse",
-        help_text=ugettext_lazy(u"The course to which this rule applies.")
+        help_text=ugettext_lazy(u"The course to which this rule applies."),
+        on_delete=models.CASCADE,
     )
 
     country = models.ForeignKey(
         "Country",
-        help_text=ugettext_lazy(u"The country to which this rule applies.")
+        help_text=ugettext_lazy(u"The country to which this rule applies."),
+        on_delete=models.CASCADE,
     )
 
     CACHE_KEY = u"embargo.allowed_countries.{course_key}"

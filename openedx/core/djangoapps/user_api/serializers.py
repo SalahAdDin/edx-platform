@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from django.utils.timezone import now
 from rest_framework import serializers
 
-from lms.djangoapps.verify_student.models import IDVerificationAggregate
+from lms.djangoapps.verify_student.models import SoftwareSecurePhotoVerification, SSOVerification
 
 from .models import UserPreference
 
@@ -94,7 +94,7 @@ class CountryTimeZoneSerializer(serializers.Serializer):  # pylint: disable=abst
     description = serializers.CharField()
 
 
-class IDVerificationAggregateSerializer(serializers.ModelSerializer):
+class IDVerificationSerializer(serializers.ModelSerializer):
     """
     Serializer that generates a representation of a user's ID verification status.
     """
@@ -106,6 +106,16 @@ class IDVerificationAggregateSerializer(serializers.ModelSerializer):
         """
         return obj.status == 'approved' and obj.expiration_datetime > now()
 
+
+class SoftwareSecurePhotoVerificationSerializer(IDVerificationSerializer):
+
     class Meta(object):
         fields = ('status', 'expiration_datetime', 'is_verified')
-        model = IDVerificationAggregate
+        model = SoftwareSecurePhotoVerification
+
+
+class SSOVerificationSerializer(IDVerificationSerializer):
+
+    class Meta(object):
+        fields = ('status', 'expiration_datetime', 'is_verified')
+        model = SSOVerification

@@ -11,7 +11,7 @@ from django.utils import timezone
 from django.utils.translation import ugettext as _
 from django.template import RequestContext
 from third_party_auth import pipeline
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from util.date_utils import strftime_localized
 from opaque_keys.edx.keys import CourseKey
 from openedx.core.djangoapps.content.course_overviews.models import CourseOverview
@@ -337,7 +337,7 @@ from student.models import CourseEnrollment
 </section>
 
 <section id="unenroll-modal" class="modal unenroll-modal" aria-hidden="true">
-  <div class="inner-wrapper" role="dialog" aria-labelledby="unenrollment-modal-title">
+  <div class="inner-wrapper" role="dialog" aria-labelledby="unenrollment-modal-title" aria-live="polite">
     <button class="close-modal">
       <span class="icon fa fa-remove" aria-hidden="true"></span>
       <span class="sr">
@@ -362,7 +362,7 @@ from student.models import CourseEnrollment
       <input name="course_id" id="unenroll_course_id" type="hidden" />
       <input name="enrollment_action" type="hidden" value="unenroll" />
       <div class="submit">
-        <input name="submit" type="submit" value="${_("Unenroll")}" />
+        <input class="submit-button" name="submit" type="submit" value="${_("Unenroll")}" />
       </div>
     </form>
     <%include file='dashboard/_reason_survey.html' />

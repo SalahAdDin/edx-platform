@@ -11,8 +11,9 @@ import httpretty
 import pytz
 from django.conf import settings
 from django.core.cache import cache
+from django.core.exceptions import ImproperlyConfigured
 from django.core.handlers.wsgi import WSGIRequest
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.test import Client
 from django.test.utils import override_settings
 from mock import patch
@@ -555,6 +556,19 @@ class EnrollmentTest(EnrollmentTestMixin, ModuleStoreTestCase, APITestCase, Ente
             expected_status = status.HTTP_429_TOO_MANY_REQUESTS if attempt >= self.rate_limit else status.HTTP_200_OK
             self.assert_enrollment_status(expected_status=expected_status)
 
+    @ddt.data('staff', 'user')
+    def test_enrollment_throttle_is_set_correctly(self, user_scope):
+        """ Make sure throttle rate is set correctly for different user scopes. """
+        self.rate_limit_config.enabled = True
+        self.rate_limit_config.save()
+
+        throttle = EnrollmentUserThrottle()
+        throttle.scope = user_scope
+        try:
+            throttle.parse_rate(throttle.get_rate())
+        except ImproperlyConfigured:
+            self.fail("No throttle rate set for {}".format(user_scope))
+
     def test_create_enrollment_with_mode(self):
         """With the right API key, create a new enrollment with a mode set other than the default."""
         # Create a professional ed course mode.
@@ -1019,6 +1033,23 @@ class EnrollmentTest(EnrollmentTestMixin, ModuleStoreTestCase, APITestCase, Ente
         self.assertEqual(enrollment.mode, mode)
         self.assertEqual(enrollment.attributes.get(namespace='order', name='order_number').value, order_number)
 
+        # Updating an enrollment should update attributes (for audit mode enrollments also)
+        order_number = 'EDX-3000'
+        enrollment_attributes = [{
+            'namespace': 'order',
+            'name': 'order_number',
+            'value': order_number,
+        }]
+        self.assert_enrollment_status(
+            as_server=True,
+            mode='audit',
+            enrollment_attributes=enrollment_attributes
+        )
+        enrollment.refresh_from_db()
+        self.assertTrue(enrollment.is_active)
+        self.assertEqual(enrollment.mode, mode)
+        self.assertEqual(enrollment.attributes.get(namespace='order', name='order_number').value, order_number)
+
 
 @unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Test only valid in lms')
 class EnrollmentEmbargoTest(EnrollmentTestMixin, UrlResetMixin, ModuleStoreTestCase):
@@ -1283,10 +1314,18 @@ class UnenrollmentTest(EnrollmentTestMixin, ModuleStoreTestCase):
 
     def test_deactivate_enrollments_no_username(self):
         self._assert_active()
+        response = self._submit_unenroll(self.superuser, None)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        data = json.loads(response.content)
+        self.assertEqual(data, u"Username not specified.")
+        self._assert_active()
+
+    def test_deactivate_enrollments_empty_username(self):
+        self._assert_active()
         response = self._submit_unenroll(self.superuser, "")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         data = json.loads(response.content)
-        self.assertEqual(data['message'], 'The user was not specified.')
+        self.assertEqual(data, u'The user "" does not exist.')
         self._assert_active()
 
     def test_deactivate_enrollments_invalid_username(self):
@@ -1294,7 +1333,7 @@ class UnenrollmentTest(EnrollmentTestMixin, ModuleStoreTestCase):
         response = self._submit_unenroll(self.superuser, "a made up username")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         data = json.loads(response.content)
-        self.assertEqual(data['message'], 'The user "a made up username" does not exist.')
+        self.assertEqual(data, u'The user "a made up username" does not exist.')
         self._assert_active()
 
     def test_deactivate_enrollments_called_twice(self):
@@ -1318,7 +1357,10 @@ class UnenrollmentTest(EnrollmentTestMixin, ModuleStoreTestCase):
             self.assertFalse(is_active)
 
     def _submit_unenroll(self, submitting_user, unenrolling_username):
-        data = {'user': unenrolling_username}
+        data = {}
+        if unenrolling_username is not None:
+            data['username'] = unenrolling_username
+
         url = reverse('unenrollment')
         headers = self.build_jwt_headers(submitting_user)
         return self.client.post(url, json.dumps(data), content_type='application/json', **headers)

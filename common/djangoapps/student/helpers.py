@@ -8,10 +8,9 @@ import urllib
 import urlparse
 from datetime import datetime
 
-import django
 from django.conf import settings
 from django.core.exceptions import PermissionDenied
-from django.core.urlresolvers import NoReverseMatch, reverse
+from django.urls import NoReverseMatch, reverse
 from django.core.validators import ValidationError
 from django.contrib.auth import load_backend
 from django.contrib.auth.models import User
@@ -48,7 +47,8 @@ from student.models import (
     Registration,
     UserAttribute,
     UserProfile,
-    unique_id_for_user
+    unique_id_for_user,
+    email_exists_or_retired
 )
 
 
@@ -116,14 +116,10 @@ def check_verify_status_by_course(user, course_enrollments):
     verifications = IDVerificationService.verifications_for_user(user)
 
     # Check whether the user has an active or pending verification attempt
-    # To avoid another database hit, we re-use the queryset we have already retrieved.
-    has_active_or_pending = IDVerificationService.user_has_valid_or_pending(
-        user, queryset=verifications
-    )
+    has_active_or_pending = IDVerificationService.user_has_valid_or_pending(user)
 
     # Retrieve expiration_datetime of most recent approved verification
-    # To avoid another database hit, we re-use the queryset we have already retrieved.
-    expiration_datetime = IDVerificationService.get_expiration_datetime(user, verifications)
+    expiration_datetime = IDVerificationService.get_expiration_datetime(user, ['approved'])
     verification_expiring_soon = is_verification_expiring_soon(expiration_datetime)
 
     # Retrieve verification deadlines for the enrolled courses
@@ -333,14 +329,14 @@ def get_redirect_to(request):
     # get information about a user on edx.org. In any such case drop the parameter.
     if redirect_to:
         mime_type, _ = mimetypes.guess_type(redirect_to, strict=False)
-        if not http.is_safe_url(redirect_to, host=request.get_host()):
+        if not http.is_safe_url(redirect_to, allowed_hosts={request.get_host()}, require_https=True):
             log.warning(
                 u'Unsafe redirect parameter detected after login page: %(redirect_to)r',
                 {"redirect_to": redirect_to}
             )
             redirect_to = None
         elif 'text/html' not in header_accept:
-            log.warning(
+            log.info(
                 u'Redirect to non html content %(content_type)r detected from %(user_agent)r'
                 u' after login page: %(redirect_to)r',
                 {
@@ -416,13 +412,8 @@ def create_or_set_user_attribute_created_on_site(user, site):
         UserAttribute.set_user_attribute(user, 'created_on_site', site.domain)
 
 
-# TODO: Remove Django 1.11 upgrade shim
-# SHIM: Compensate for behavior change of default authentication backend in 1.10
-if django.VERSION < (1, 10):
-    NEW_USER_AUTH_BACKEND = 'django.contrib.auth.backends.ModelBackend'
-else:
-    # We want to allow inactive users to log in only when their account is first created
-    NEW_USER_AUTH_BACKEND = 'django.contrib.auth.backends.AllowAllUsersModelBackend'
+# We want to allow inactive users to log in only when their account is first created
+NEW_USER_AUTH_BACKEND = 'django.contrib.auth.backends.AllowAllUsersModelBackend'
 
 # Disable this warning because it doesn't make sense to completely refactor tests to appease Pylint
 # pylint: disable=logging-format-interpolation
@@ -656,7 +647,7 @@ def do_create_account(form, custom_form=None):
                 USERNAME_EXISTS_MSG_FMT.format(username=proposed_username),
                 field="username"
             )
-        elif User.objects.filter(email=user.email):
+        elif email_exists_or_retired(user.email):
             raise AccountValidationError(
                 _("An account with the Email '{email}' already exists.").format(email=user.email),
                 field="email"

@@ -8,7 +8,7 @@ import requests
 import waffle
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.utils.translation import ugettext as _
 
 from openedx.core.djangoapps.commerce.utils import ecommerce_api_client, is_commerce_service_configured
@@ -85,7 +85,7 @@ class EcommerceService(object):
             Boolean
         """
         user_is_active = user.is_active or is_account_activation_requirement_disabled()
-        allow_user = user_is_active or user.is_anonymous()
+        allow_user = user_is_active or user.is_anonymous
         return allow_user and self.config.checkout_on_ecommerce_service
 
     def payment_page_url(self):

@@ -11,7 +11,7 @@ import freezegun
 import httpretty
 import pytz
 from django.conf import settings
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from mock import patch
 from nose.plugins.attrib import attr
 
@@ -30,7 +30,7 @@ from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
 from xmodule.modulestore.tests.factories import CourseFactory
 
 
-@attr(shard=3)
+@attr(shard=5)
 @ddt.ddt
 @unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Test only valid in lms')
 class CourseModeViewTest(CatalogIntegrationMixin, UrlResetMixin, ModuleStoreTestCase, CourseCatalogServiceMockMixin):

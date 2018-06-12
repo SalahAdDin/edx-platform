@@ -24,7 +24,7 @@
 #    as development.in or testing.in instead.
 
 analytics-python==1.1.0             # Used for Segment analytics
-attrs==17.2.0                       # Reduces boilerplate code involving class attributes
+attrs                               # Reduces boilerplate code involving class attributes
 Babel==1.3                          # Internationalization utilities, used for date formatting in a few places
 bleach==1.4                         # Allowed-list-based HTML sanitizing library that escapes or strips markup and attributes; used for capa and LTI
 boto==2.39.0                        # Deprecated version of the AWS SDK; we should stop using this
@@ -33,9 +33,8 @@ botocore==1.8.17                    # via boto3, s3transfer
 celery==3.1.25                      # Asynchronous task execution library
 ddt==0.8.0                          # via xblock-drag-and-drop-v2 (which probably shouldn't require it)
 defusedxml==0.4.1                   # XML bomb protection for common XML parsers
-Django==1.11.12                     # Web application framework
+Django==1.11.13                     # Web application framework
 django-babel-underscore             # underscore template extractor for django-babel (internationalization utilities)
-django-birdcage                     # CSRF token forwards compatibility for the Django 1.11 upgrade; can be removed after that
 django-config-models==0.1.8         # Configuration models for Django allowing config management with auditing
 django-cors-headers==2.1.0          # Used to allow to configure CORS headers for cross-domain requests
 django-countries==4.6.1             # Country data for Django forms and model fields
@@ -52,6 +51,7 @@ django-pyfs
 django-ratelimit
 django-ratelimit-backend==1.1.1
 django-require
+django-rest-swagger                 # API documentation
 django-sekizai
 django-ses==0.8.4
 django-simple-history
@@ -63,7 +63,7 @@ django-waffle==0.12.0
 django-webpack-loader==0.4.1
 djangorestframework-jwt
 dogapi==1.2.1                       # Python bindings to Datadog's API, for metrics gathering
-edx-ace
+edx-ace==0.1.8
 edx-analytics-data-api-client
 edx-ccx-keys
 edx-celeryutils
@@ -121,9 +121,10 @@ pynliner==0.5.2                     # Inlines CSS styles into HTML for email not
 python-dateutil==2.4
 python-Levenshtein
 python-openid
-python-saml
+python-saml==2.4.0
 pyuca==1.1                          # For more accurate sorting of translated country names in django-countries
 reportlab==3.1.44                   # Used for shopping cart's pdf invoice/receipt generation
+rfc6266-parser                      # Used to generate Content-Disposition headers.
 social-auth-app-django==1.2.0
 social-auth-core==1.4.0
 pysrt==0.4.7                        # Support for SubRip subtitle files, used in the video XModule

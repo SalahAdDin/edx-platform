@@ -9,9 +9,11 @@ from ..profile_images.views import ProfileImageView
 from .accounts.views import (
     AccountDeactivationView,
     AccountRetireMailingsView,
+    AccountRetirementStatusView,
     AccountRetirementView,
     AccountViewSet,
-    DeactivateLogoutView
+    DeactivateLogoutView,
+    LMSAccountRetirementView
 )
 from .preferences.views import PreferencesDetailView, PreferencesView
 from .verification_api.views import IDVerificationStatusView
@@ -30,18 +32,25 @@ ACCOUNT_DETAIL = AccountViewSet.as_view({
     'patch': 'partial_update',
 })
 
-RETIREMENT_QUEUE = AccountRetirementView.as_view({
+RETIREMENT_QUEUE = AccountRetirementStatusView.as_view({
     'get': 'retirement_queue'
 })
 
-RETIREMENT_RETRIEVE = AccountRetirementView.as_view({
+RETIREMENT_RETRIEVE = AccountRetirementStatusView.as_view({
     'get': 'retrieve'
 })
 
-RETIREMENT_UPDATE = AccountRetirementView.as_view({
+RETIREMENT_UPDATE = AccountRetirementStatusView.as_view({
     'patch': 'partial_update',
 })
 
+RETIREMENT_POST = AccountRetirementView.as_view({
+    'post': 'post',
+})
+
+RETIREMENT_LMS_POST = LMSAccountRetirementView.as_view({
+    'post': 'post',
+})
 
 urlpatterns = [
     url(
@@ -70,7 +79,7 @@ urlpatterns = [
         name='accounts_deactivation'
     ),
     url(
-        r'^v1/accounts/{}/retire_mailings/$'.format(settings.USERNAME_PATTERN),
+        r'^v1/accounts/retire_mailings/$',
         AccountRetireMailingsView.as_view(),
         name='accounts_retire_mailings'
     ),
@@ -93,6 +102,16 @@ urlpatterns = [
         r'^v1/accounts/retirement_queue/$',
         RETIREMENT_QUEUE,
         name='accounts_retirement_queue'
+    ),
+    url(
+        r'^v1/accounts/retire/$',
+        RETIREMENT_POST,
+        name='accounts_retire'
+    ),
+    url(
+        r'^v1/accounts/retire_misc/$',
+        RETIREMENT_LMS_POST,
+        name='accounts_retire_misc'
     ),
     url(
         r'^v1/accounts/update_retirement_status/$',

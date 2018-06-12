@@ -6,7 +6,7 @@ import pytest
 from bs4 import BeautifulSoup
 from contextlib import contextmanager
 from django.conf import settings
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.test.utils import override_settings
 from mock import patch
 from nose.plugins.attrib import attr
@@ -136,7 +136,6 @@ class TestSites(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
         self.assertNotContains(resp, 'This is a Test Site footer')
 
     @override_settings(SITE_NAME=settings.MICROSITE_TEST_HOSTNAME)
-    @pytest.mark.django111_expected_failure
     def test_site_homepage_course_max(self):
         """
         Verify that the number of courses displayed on the homepage honors

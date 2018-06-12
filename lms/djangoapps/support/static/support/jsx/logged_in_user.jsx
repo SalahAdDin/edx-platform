@@ -3,6 +3,8 @@
 import React from 'react';
 import PropTypes from 'prop-types';
 
+import StringUtils from 'edx-ui-toolkit/js/utils/string-utils';
+
 import FileUpload from './file_upload';
 
 function LoggedInUser({ userInformation, setErrorState, zendeskApiHost, submitForm }) {
@@ -10,7 +12,7 @@ function LoggedInUser({ userInformation, setErrorState, zendeskApiHost, submitFo
   if (userInformation.enrollments) {
     courseElement = (<div>
       <label className="label-course" htmlFor="course">{gettext('Course Name')}</label>
-      <select className="form-control select-course" id="course" value={userInformation.course_id}>
+      <select className="form-control select-course" id="course" defaultValue={userInformation.course_id}>
         <option key="select-course" value="">--------</option>
         <option key="not-course-specific" value="Not specific to a course">
           {gettext('Not specific to a course')}
@@ -36,7 +38,12 @@ function LoggedInUser({ userInformation, setErrorState, zendeskApiHost, submitFo
         data-username={userInformation.username}
         data-email={userInformation.email}
       >
-        <p>{gettext(`What can we help you with, ${userInformation.username}?`)}</p>
+        <p>
+          {StringUtils.interpolate(
+            gettext('What can we help you with, {username}?'),
+            { username: userInformation.username },
+          )}
+        </p>
       </div>
     </div>
 
@@ -74,12 +81,12 @@ function LoggedInUser({ userInformation, setErrorState, zendeskApiHost, submitFo
       </div>
     </div>
 
-    {/*TODO file uploading will be done after initial release*/}
-    {/*<FileUpload*/}
-      {/*setErrorState={setErrorState}*/}
-      {/*zendeskApiHost={zendeskApiHost}*/}
-      {/*accessToken={accessToken}*/}
-    {/*/>*/}
+    {/* TODO file uploading will be done after initial release */}
+    {/* <FileUpload */}
+      {/* setErrorState={setErrorState} */}
+      {/* zendeskApiHost={zendeskApiHost} */}
+      {/* accessToken={accessToken} */}
+    {/* /> */}
 
     <div className="row">
       <div className="col-sm-12">

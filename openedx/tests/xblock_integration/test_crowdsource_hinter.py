@@ -5,7 +5,7 @@ import json
 import unittest
 
 from django.conf import settings
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from nose.plugins.attrib import attr
 from six import text_type
 
@@ -134,7 +134,7 @@ class TestCrowdsourceHinter(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
         self.assert_request_status_code(200, self.course_url)
 
 
-@attr(shard=1)
+@attr(shard=6)
 class TestHinterFunctions(TestCrowdsourceHinter):
     """
     Check that the essential functions of the hinter work as expected.

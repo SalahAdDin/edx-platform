@@ -3,7 +3,7 @@ Tests for the Certificate REST APIs.
 """
 from datetime import datetime, timedelta
 
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.utils import timezone
 from freezegun import freeze_time
 from oauth2_provider import models as dot_models
@@ -24,6 +24,7 @@ class CertificatesRestApiTest(SharedModuleStoreTestCase, APITestCase):
     """
     Test for the Certificates REST APIs
     """
+    shard = 4
     now = timezone.now()
 
     @classmethod

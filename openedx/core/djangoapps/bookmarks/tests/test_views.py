@@ -5,9 +5,8 @@ import json
 import urllib
 
 import ddt
-import pytest
 from django.conf import settings
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from mock import patch
 from nose.plugins.attrib import attr
 from rest_framework.test import APIClient
@@ -63,10 +62,9 @@ class BookmarksViewsTestsBase(BookmarksTestsBase, BookmarkApiEventTestMixin):
         return response
 
 
-@attr(shard=2)
+@attr(shard=9)
 @ddt.ddt
 @skip_unless_lms
-@pytest.mark.django111_expected_failure
 class BookmarksListViewTests(BookmarksViewsTestsBase):
     """
     This contains the tests for GET & POST methods of bookmark.views.BookmarksListView class
@@ -369,10 +367,9 @@ class BookmarksListViewTests(BookmarksViewsTestsBase):
         )
 
 
-@attr(shard=2)
+@attr(shard=9)
 @ddt.ddt
 @skip_unless_lms
-@pytest.mark.django111_expected_failure
 class BookmarksDetailViewTests(BookmarksViewsTestsBase):
     """
     This contains the tests for GET & DELETE methods of bookmark.views.BookmarksDetailView class

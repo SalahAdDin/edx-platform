@@ -324,6 +324,29 @@ class CourseOverview(TimeStampedModel):
             )
         }
 
+    @classmethod
+    def get_from_id_if_exists(cls, course_id):
+        """
+        Return a CourseOverview for the provided course_id if it exists.
+        Returns None if no CourseOverview exists with the provided course_id
+
+        This method will *not* generate new CourseOverviews or delete outdated
+        ones. It exists only as a small optimization used when CourseOverviews
+        are known to exist, for common situations like the student dashboard.
+
+        Callers should assume that this list is incomplete and fall back to
+        get_from_id if they need to guarantee CourseOverview generation.
+        """
+        try:
+            course_overview = cls.objects.select_related('image_set').get(
+                id=course_id,
+                version__gte=cls.VERSION
+            )
+        except cls.DoesNotExist:
+            course_overview = None
+
+        return course_overview
+
     def clean_id(self, padding_char='='):
         """
         Returns a unique deterministic base32-encoded ID for the course.
@@ -685,7 +708,7 @@ class CourseOverviewTab(models.Model):
     Model for storing and caching tabs information of a course.
     """
     tab_id = models.CharField(max_length=50)
-    course_overview = models.ForeignKey(CourseOverview, db_index=True, related_name="tabs")
+    course_overview = models.ForeignKey(CourseOverview, db_index=True, related_name="tabs", on_delete=models.CASCADE)
 
 
 class CourseOverviewImageSet(TimeStampedModel):
@@ -756,7 +779,8 @@ class CourseOverviewImageSet(TimeStampedModel):
        interested in extending this functionality.
 
     """
-    course_overview = models.OneToOneField(CourseOverview, db_index=True, related_name="image_set")
+    course_overview = models.OneToOneField(CourseOverview, db_index=True, related_name="image_set",
+                                           on_delete=models.CASCADE)
     small_url = models.TextField(blank=True, default="")
     large_url = models.TextField(blank=True, default="")
 

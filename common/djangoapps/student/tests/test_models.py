@@ -20,7 +20,14 @@ from openedx.core.djangoapps.content.course_overviews.models import CourseOvervi
 from openedx.core.djangoapps.schedules.models import Schedule
 from openedx.core.djangoapps.schedules.tests.factories import ScheduleFactory
 from openedx.core.djangolib.testing.utils import skip_unless_lms
-from student.models import CourseEnrollment, CourseEnrollmentAllowed, PendingEmailChange
+from student.models import (
+    CourseEnrollment,
+    CourseEnrollmentAllowed,
+    PendingEmailChange,
+    ManualEnrollmentAudit,
+    ALLOWEDTOENROLL_TO_ENROLLED,
+    PendingNameChange
+)
 from student.tests.factories import CourseEnrollmentFactory, UserFactory
 from xmodule.modulestore.tests.django_utils import SharedModuleStoreTestCase
 from xmodule.modulestore.tests.factories import CourseFactory
@@ -201,6 +208,35 @@ class CourseEnrollmentTests(SharedModuleStoreTestCase):
         self.assertIsNone(enrollment.upgrade_deadline)
 
 
+class PendingNameChangeTests(SharedModuleStoreTestCase):
+    """
+    Tests the deletion of PendingNameChange records
+    """
+    @classmethod
+    def setUpClass(cls):
+        super(PendingNameChangeTests, cls).setUpClass()
+        cls.user = UserFactory()
+        cls.user2 = UserFactory()
+
+    def setUp(self):
+        self.name_change, _ = PendingNameChange.objects.get_or_create(
+            user=self.user,
+            new_name='New Name PII',
+            rationale='for testing!'
+        )
+        self.assertEqual(1, len(PendingNameChange.objects.all()))
+
+    def test_delete_by_user_removes_pending_name_change(self):
+        record_was_deleted = PendingNameChange.delete_by_user_value(self.user, field='user')
+        self.assertTrue(record_was_deleted)
+        self.assertEqual(0, len(PendingNameChange.objects.all()))
+
+    def test_delete_by_user_no_effect_for_user_with_no_name_change(self):
+        record_was_deleted = PendingNameChange.delete_by_user_value(self.user2, field='user')
+        self.assertFalse(record_was_deleted)
+        self.assertEqual(1, len(PendingNameChange.objects.all()))
+
+
 class PendingEmailChangeTests(SharedModuleStoreTestCase):
     """
     Tests the deletion of PendingEmailChange records.
@@ -208,7 +244,6 @@ class PendingEmailChangeTests(SharedModuleStoreTestCase):
     @classmethod
     def setUpClass(cls):
         super(PendingEmailChangeTests, cls).setUpClass()
-        cls.course = CourseFactory()
         cls.user = UserFactory()
         cls.user2 = UserFactory()
 
@@ -264,3 +299,52 @@ class TestCourseEnrollmentAllowed(TestCase):
             email=self.email
         )
         self.assertTrue(user_search_results.exists())
+
+
+class TestManualEnrollmentAudit(SharedModuleStoreTestCase):
+    """
+    Tests for the ManualEnrollmentAudit model.
+    """
+    @classmethod
+    def setUpClass(cls):
+        super(TestManualEnrollmentAudit, cls).setUpClass()
+        cls.course = CourseFactory()
+        cls.other_course = CourseFactory()
+        cls.user = UserFactory()
+        cls.instructor = UserFactory(username='staff', is_staff=True)
+
+    def test_retirement(self):
+        """
+        Tests that calling the retirement method for a specific enrollment retires
+        the enrolled_email and reason columns of each row associated with that
+        enrollment.
+        """
+        enrollment = CourseEnrollment.enroll(self.user, self.course.id)
+        other_enrollment = CourseEnrollment.enroll(self.user, self.other_course.id)
+        ManualEnrollmentAudit.create_manual_enrollment_audit(
+            self.instructor, self.user.email, ALLOWEDTOENROLL_TO_ENROLLED,
+            'manually enrolling unenrolled user', enrollment
+        )
+        ManualEnrollmentAudit.create_manual_enrollment_audit(
+            self.instructor, self.user.email, ALLOWEDTOENROLL_TO_ENROLLED,
+            'manually enrolling unenrolled user again', enrollment
+        )
+        ManualEnrollmentAudit.create_manual_enrollment_audit(
+            self.instructor, self.user.email, ALLOWEDTOENROLL_TO_ENROLLED,
+            'manually enrolling unenrolled user', other_enrollment
+        )
+        ManualEnrollmentAudit.create_manual_enrollment_audit(
+            self.instructor, self.user.email, ALLOWEDTOENROLL_TO_ENROLLED,
+            'manually enrolling unenrolled user again', other_enrollment
+        )
+        self.assertTrue(ManualEnrollmentAudit.objects.filter(enrollment=enrollment).exists())
+        # retire the ManualEnrollmentAudit objects associated with the above enrollments
+        enrollments = CourseEnrollment.objects.filter(user=self.user)
+        ManualEnrollmentAudit.retire_manual_enrollments(enrollments=enrollments, retired_email="xxx")
+        self.assertTrue(ManualEnrollmentAudit.objects.filter(enrollment=enrollment).exists())
+        self.assertFalse(ManualEnrollmentAudit.objects.filter(enrollment=enrollment).exclude(
+            enrolled_email="xxx"
+        ))
+        self.assertFalse(ManualEnrollmentAudit.objects.filter(enrollment=enrollment).exclude(
+            reason=""
+        ))

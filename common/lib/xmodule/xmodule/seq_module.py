@@ -212,6 +212,8 @@ class SequenceModule(SequenceFields, ProctoringFields, XModule):
             completion_service = self.runtime.service(self, 'completion')
 
             usage_key = data.get('usage_key', None)
+            if not usage_key:
+                return None
             item = self.get_child(UsageKey.from_string(usage_key))
             if not item:
                 return None
@@ -468,6 +470,7 @@ class SequenceModule(SequenceFields, ProctoringFields, XModule):
                 'id': text_type(usage_id),
                 'bookmarked': is_bookmarked,
                 'path': " > ".join(display_names + [item.display_name_with_default]),
+                'graded': item.graded
             }
 
             if is_user_authenticated:

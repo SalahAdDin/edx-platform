@@ -27,7 +27,7 @@
             enterpriseReadonlyAccountFields,
             edxSupportUrl,
             extendedProfileFields,
-            enableGDPRFlag
+            displayAccountDeletion
         ) {
             var $accountSettingsElement, userAccountModel, userPreferencesModel, aboutSectionsData,
                 accountsSectionData, ordersSectionData, accountSettingsView, showAccountSettingsPage,
@@ -292,7 +292,7 @@
             aboutSectionsData.push(socialFields);
 
             // Add account deletion fields
-            if (enableGDPRFlag) {
+            if (displayAccountDeletion) {
                 accountDeletionFields = {
                     title: gettext('Delete My Account'),
                     fields: [],
@@ -302,8 +302,8 @@
                 aboutSectionsData.push(accountDeletionFields);
             }
 
-
             // set TimeZoneField to listen to CountryField
+
             getUserField = function(list, search) {
                 return _.find(list, function(field) {
                     return field.view.options.valueAttribute === search;

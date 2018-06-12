@@ -17,7 +17,7 @@ from django.conf import settings
 from django.contrib.auth import REDIRECT_FIELD_NAME, authenticate, login
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.core.validators import validate_email
 from django.db import transaction
 from django.http import HttpResponse, HttpResponseForbidden, HttpResponseRedirect
@@ -401,7 +401,7 @@ def ssl_login_shortcut(func):
             return func(*args, **kwargs)
         request = args[0]
 
-        if request.user and request.user.is_authenticated():  # don't re-authenticate
+        if request.user and request.user.is_authenticated:  # don't re-authenticate
             return func(*args, **kwargs)
 
         cert = ssl_get_cert_from_request(request)
@@ -484,7 +484,7 @@ def cas_login(request, next_page=None, required=False):
 
     ret = django_cas_login(request, next_page, required)
 
-    if request.user.is_authenticated():
+    if request.user.is_authenticated:
         user = request.user
         UserProfile.objects.get_or_create(
             user=user,
@@ -556,7 +556,7 @@ def _safe_postlogin_redirect(redirect_to, safehost, default_redirect='/'):
     @param safehost: which host is safe to redirect to
     @return: an HttpResponseRedirect
     """
-    if is_safe_url(url=redirect_to, host=safehost):
+    if is_safe_url(url=redirect_to, allowed_hosts={safehost}, require_https=True):
         return redirect(redirect_to)
     return redirect(default_redirect)
 

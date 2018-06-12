@@ -18,7 +18,7 @@ from django.contrib.auth import authenticate, load_backend, login as django_logi
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import AnonymousUser, User
 from django.core.exceptions import ObjectDoesNotExist, PermissionDenied
-from django.core.urlresolvers import NoReverseMatch, reverse, reverse_lazy
+from django.urls import NoReverseMatch, reverse, reverse_lazy
 from django.core.validators import ValidationError, validate_email
 from django.http import Http404, HttpResponse, HttpResponseBadRequest, HttpResponseForbidden
 from django.shortcuts import redirect
@@ -44,8 +44,10 @@ from edxmako.shortcuts import render_to_response, render_to_string
 from eventtracking import tracker
 from openedx.core.djangoapps.external_auth.login_and_register import login as external_auth_login
 from openedx.core.djangoapps.external_auth.models import ExternalAuthMap
+from openedx.core.djangoapps.password_policy import compliance as password_policy_compliance
 from openedx.core.djangoapps.site_configuration import helpers as configuration_helpers
 from openedx.core.djangoapps.user_api.accounts.utils import generate_password
+from openedx.core.djangoapps.util.user_messages import PageLevelMessages
 from openedx.features.course_experience import course_home_url_name
 from student.cookies import delete_logged_in_cookies, set_logged_in_cookies
 from student.forms import AccountCreationForm
@@ -190,6 +192,17 @@ def _check_forced_password_reset(user):
         raise AuthFailedError(_('Your password has expired due to password policy on this account. You must '
                                 'reset your password before you can log in again. Please click the '
                                 '"Forgot Password" link on this page to reset your password before logging in again.'))
+
+
+def _enforce_password_policy_compliance(request, user):
+    try:
+        password_policy_compliance.enforce_compliance_on_login(user, request.POST.get('password'))
+    except password_policy_compliance.NonCompliantPasswordWarning as e:
+        # Allow login, but warn the user that they will be required to reset their password soon.
+        PageLevelMessages.register_warning_message(request, e.message)
+    except password_policy_compliance.NonCompliantPasswordException as e:
+        # Prevent the login attempt.
+        raise AuthFailedError(e.message)
 
 
 def _generate_not_activated_message(user):
@@ -448,6 +461,9 @@ def login_user(request):
 
         if not was_authenticated_third_party:
             possibly_authenticated_user = _authenticate_first_party(request, email_user)
+            if possibly_authenticated_user and password_policy_compliance.should_enforce_compliance_on_login():
+                # Important: This call must be made AFTER the user was successfully authenticated.
+                _enforce_password_policy_compliance(request, possibly_authenticated_user)
 
         if possibly_authenticated_user is None or not possibly_authenticated_user.is_active:
             _handle_failed_authentication(email_user)
@@ -514,7 +530,7 @@ def signin_user(request):
         return external_auth_response
     # Determine the URL to redirect to following login:
     redirect_to = get_next_url_for_login_page(request)
-    if request.user.is_authenticated():
+    if request.user.is_authenticated:
         return redirect(redirect_to)
 
     third_party_auth_error = None
@@ -609,6 +625,10 @@ def auto_auth(request):
     redirect_when_done = str2bool(request.GET.get('redirect', '')) or redirect_to
     login_when_done = 'no_login' not in request.GET
 
+    restricted = settings.FEATURES.get('RESTRICT_AUTOMATIC_AUTH', True)
+    if is_superuser and restricted:
+        return HttpResponseForbidden(_('Superuser creation not allowed'))
+
     form = AccountCreationForm(
         data={
             'username': username,
@@ -625,6 +645,8 @@ def auto_auth(request):
     try:
         user, profile, reg = do_create_account(form)
     except (AccountValidationError, ValidationError):
+        if restricted:
+            return HttpResponseForbidden(_('Account modification not allowed.'))
         # Attempt to retrieve the existing user.
         user = User.objects.get(username=username)
         user.email = email
@@ -725,7 +747,7 @@ class LogoutView(TemplateView):
         """
         target_url = self.request.GET.get('redirect_url')
 
-        if target_url and is_safe_url(target_url, self.request.META.get('HTTP_HOST')):
+        if target_url and is_safe_url(target_url, allowed_hosts={self.request.META.get('HTTP_HOST')}, require_https=True):
             return target_url
         else:
             return self.default_target

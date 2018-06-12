@@ -2,7 +2,7 @@
 Support tool for changing course enrollments.
 """
 from django.contrib.auth.models import User
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.db import transaction
 from django.db.models import Q
 from django.http import HttpResponseBadRequest
@@ -46,6 +46,10 @@ class EnrollmentSupportListView(GenericAPIView):
     Allows viewing and changing learner enrollments by support
     staff.
     """
+    # TODO: ARCH-91
+    # This view is excluded from Swagger doc generation because it
+    # does not specify a serializer class.
+    exclude_from_schema = True
 
     @method_decorator(require_support_permission)
     def get(self, request, username_or_email):

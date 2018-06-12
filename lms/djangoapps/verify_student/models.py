@@ -25,7 +25,7 @@ from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
 from django.core.cache import cache
 from django.core.files.base import ContentFile
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.db import models
 from django.dispatch import receiver
 from django.utils.functional import cached_property
@@ -98,7 +98,7 @@ class IDVerificationAttempt(StatusModel):
     including PhotoVerification and SSOVerification.
     """
     STATUS = Choices('created', 'ready', 'submitted', 'must_retry', 'approved', 'denied')
-    user = models.ForeignKey(User, db_index=True)
+    user = models.ForeignKey(User, db_index=True, on_delete=models.CASCADE)
 
     # They can change their name later on, so we want to copy the value here so
     # we always preserve what it was at the time they requested. We only copy
@@ -139,53 +139,6 @@ class IDVerificationAttempt(StatusModel):
             self.created_at < deadline and
             self.expiration_datetime > datetime.now(pytz.UTC)
         )
-
-
-class IDVerificationAggregate(IDVerificationAttempt):
-    """
-    IDVerificationAggregate is the source of truth for all instances of IDVerificationAttempt. This
-    includes all types of verification, including PhotoVerification and SSOVerification. A generic
-    relation is used to refer to the appropriate Model object.
-    """
-    content_type = models.ForeignKey(ContentType)
-    object_id = models.PositiveIntegerField()
-    content_object = GenericForeignKey('content_type', 'object_id')
-
-    # override these fields so we can set the value
-    created_at = models.DateTimeField(db_index=True)
-    updated_at = models.DateTimeField(db_index=True)
-
-    class Meta(object):
-        app_label = "verify_student"
-        ordering = ['-created_at']
-
-    def __unicode__(self):
-        return 'IDVerificationAggregate for {name} - type: {type}, status: {status}'.format(
-            name=self.name,
-            type=self.content_type,
-            status=self.status,
-        )
-
-    def should_display_status_to_user(self):
-        """Whether or not the status from this attempt should be displayed to the user."""
-        return self.content_object.should_display_status_to_user()
-
-
-def post_save_id_verification(sender, instance, created, **kwargs):  # pylint: disable=unused-argument
-    """
-    Post save handler to create/update IDVerificationAttempt instances.
-    """
-    content_type = ContentType.objects.get_for_model(instance)
-    try:
-        id_verification = IDVerificationAggregate.objects.get(content_type=content_type, object_id=instance.id)
-    except IDVerificationAggregate.DoesNotExist:
-        id_verification = IDVerificationAggregate(content_type=content_type, object_id=instance.id)
-    id_verification.status = instance.status
-    id_verification.user = instance.user
-    id_verification.name = instance.name
-    id_verification.created_at = instance.created_at
-    id_verification.updated_at = instance.updated_at
-    id_verification.save()
 
 
 class SSOVerification(IDVerificationAttempt):
@@ -233,10 +186,8 @@ class SSOVerification(IDVerificationAttempt):
         """Whether or not the status from this attempt should be displayed to the user."""
         return False
 
-models.signals.post_save.connect(post_save_id_verification, sender=SSOVerification)
 
-
-class PhotoVerification(IDVerificationAttempt, DeletableByUserValue):
+class PhotoVerification(IDVerificationAttempt):
     """
     Each PhotoVerification represents a Student's attempt to establish
     their identity by uploading a photo of themselves and a picture ID. An
@@ -308,7 +259,8 @@ class PhotoVerification(IDVerificationAttempt, DeletableByUserValue):
         db_index=True,
         default=None,
         null=True,
-        related_name="photo_verifications_reviewed"
+        related_name="photo_verifications_reviewed",
+        on_delete=models.CASCADE,
     )
 
     # Mark the name of the service used to evaluate this attempt (e.g
@@ -495,6 +447,30 @@ class PhotoVerification(IDVerificationAttempt, DeletableByUserValue):
         self.status = "must_retry"
         self.save()
 
+    @classmethod
+    def retire_user(cls, user_id):
+        """
+        Retire user as part of GDPR Phase I
+        Returns 'True' if records found
+
+        :param user_id: int
+        :return: bool
+        """
+        try:
+            user_obj = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return False
+
+        photo_objects = cls.objects.filter(
+            user=user_obj
+        ).update(
+            name='',
+            face_image_url='',
+            photo_id_image_url='',
+            photo_id_key=''
+        )
+        return photo_objects > 0
+
 
 class SoftwareSecurePhotoVerification(PhotoVerification):
     """
@@ -531,7 +507,7 @@ class SoftwareSecurePhotoVerification(PhotoVerification):
     photo_id_key = models.TextField(max_length=1024)
 
     IMAGE_LINK_DURATION = 5 * 60 * 60 * 24  # 5 days in seconds
-    copy_id_photo_from = models.ForeignKey("self", null=True, blank=True)
+    copy_id_photo_from = models.ForeignKey("self", null=True, blank=True, on_delete=models.CASCADE)
 
     @classmethod
     def get_initial_verification(cls, user, earliest_allowed_date=None):
@@ -883,8 +859,6 @@ class SoftwareSecurePhotoVerification(PhotoVerification):
     def should_display_status_to_user(self):
         """Whether or not the status from this attempt should be displayed to the user."""
         return True
-
-models.signals.post_save.connect(post_save_id_verification, sender=SoftwareSecurePhotoVerification)
 
 
 class VerificationDeadline(TimeStampedModel):

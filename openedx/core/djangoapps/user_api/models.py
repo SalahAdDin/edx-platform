@@ -35,7 +35,7 @@ class RetirementStateError(Exception):
 class UserPreference(models.Model):
     """A user's preference, stored as generic text to be processed by client"""
     KEY_REGEX = r"[-_a-zA-Z0-9]+"
-    user = models.ForeignKey(User, db_index=True, related_name="preferences")
+    user = models.ForeignKey(User, db_index=True, related_name="preferences", on_delete=models.CASCADE)
     key = models.CharField(max_length=255, db_index=True, validators=[RegexValidator(KEY_REGEX)])
     value = models.TextField()
 
@@ -113,7 +113,7 @@ class UserCourseTag(models.Model):
     Per-course user tags, to be used by various things that want to store tags about
     the user.  Added initially to store assignment to experimental groups.
     """
-    user = models.ForeignKey(User, db_index=True, related_name="+")
+    user = models.ForeignKey(User, db_index=True, related_name="+", on_delete=models.CASCADE)
     key = models.CharField(max_length=255, db_index=True)
     course_id = CourseKeyField(max_length=255, db_index=True)
     value = models.TextField()
@@ -129,7 +129,7 @@ class UserOrgTag(TimeStampedModel, DeletableByUserValue):  # pylint: disable=mod
     Allows settings to be configured at an organization level.
 
     """
-    user = models.ForeignKey(User, db_index=True, related_name="+")
+    user = models.ForeignKey(User, db_index=True, related_name="+", on_delete=models.CASCADE)
     key = models.CharField(max_length=255, db_index=True)
     org = models.CharField(max_length=255, db_index=True)
     value = models.TextField()
@@ -167,28 +167,50 @@ class RetirementState(models.Model):
         return cls.objects.all().values_list('state_name', flat=True)
 
 
-@receiver(pre_delete, sender=RetirementState)
-def retirementstate_pre_delete_callback(_, **kwargs):
+class UserRetirementRequest(TimeStampedModel):
     """
-    Event changes to user preferences.
+    Records and perists every user retirement request.
+    Users that have requested to cancel their retirement before retirement begins can be removed.
+    All other retired users persist in this table forever.
     """
-    state = kwargs["instance"]
-    if state.required:
-        raise Exception('Required RetirementStates cannot be deleted.')
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+
+    class Meta(object):
+        verbose_name = 'User Retirement Request'
+        verbose_name_plural = 'User Retirement Requests'
+
+    @classmethod
+    def create_retirement_request(cls, user):
+        """
+        Creates a UserRetirementRequest for the specified user.
+        """
+        if cls.has_user_requested_retirement(user):
+            raise RetirementStateError('User {} already has a retirement request row!'.format(user))
+        return cls.objects.create(user=user)
+
+    @classmethod
+    def has_user_requested_retirement(cls, user):
+        """
+        Checks to see if a UserRetirementRequest has been created for the specified user.
+        """
+        return cls.objects.filter(user=user).exists()
+
+    def __unicode__(self):
+        return u'User: {} Requested: {}'.format(self.user.id, self.created)
 
 
 class UserRetirementStatus(TimeStampedModel):
     """
     Tracks the progress of a user's retirement request
     """
-    user = models.OneToOneField(User)
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
     original_username = models.CharField(max_length=150, db_index=True)
     original_email = models.EmailField(db_index=True)
     original_name = models.CharField(max_length=255, blank=True, db_index=True)
     retired_username = models.CharField(max_length=150, db_index=True)
     retired_email = models.EmailField(db_index=True)
-    current_state = models.ForeignKey(RetirementState, related_name='current_state')
-    last_state = models.ForeignKey(RetirementState, blank=True, related_name='last_state')
+    current_state = models.ForeignKey(RetirementState, related_name='current_state', on_delete=models.CASCADE)
+    last_state = models.ForeignKey(RetirementState, blank=True, related_name='last_state', on_delete=models.CASCADE)
     responses = models.TextField()
 
     class Meta(object):
@@ -238,10 +260,12 @@ class UserRetirementStatus(TimeStampedModel):
             raise RetirementStateError('Default state does not exist! Populate retirement states to retire users.')
 
         if cls.objects.filter(user=user).exists():
-            raise RetirementStateError('User {} already has a retirement row!'.format(user))
+            raise RetirementStateError('User {} already has a retirement status row!'.format(user))
 
         retired_username = get_retired_username_by_username(user.username)
         retired_email = get_retired_email_by_email(user.email)
+
+        UserRetirementRequest.create_retirement_request(user)
 
         return cls.objects.create(
             user=user,
@@ -269,5 +293,37 @@ class UserRetirementStatus(TimeStampedModel):
         self.responses += "\n Moved from {} to {}:\n{}\n".format(old_state, self.current_state, update['response'])
         self.save()
 
+    @classmethod
+    def get_retirement_for_retirement_action(cls, username):
+        """
+        Convenience method to get a UseRetirementStatus for a particular user with some checking
+        to make sure they're in a state that is acceptable to be acted upon. The user should be
+        in a "working state" (not a dead end state, PENDING, or *_COMPLETE). This should help
+        a bit with situations like the retirement driver accidentally trying to act upon the
+        same user twice at the same time, or trying to take action on an errored user.
+
+        Can raise UserRetirementStatus.DoesNotExist or RetirementStateError, otherwise should
+        return a UserRetirementStatus
+        """
+        retirement = cls.objects.get(original_username=username)
+        state = retirement.current_state
+
+        if state.required or state.state_name.endswith('_COMPLETE'):
+            raise RetirementStateError('{} is in {}, not a valid state to perform retirement '
+                                       'actions on.'.format(retirement, state.state_name))
+
+        return retirement
+
     def __unicode__(self):
         return u'User: {} State: {} Last Updated: {}'.format(self.user.id, self.current_state, self.modified)
+
+
+@receiver(models.signals.post_delete, sender=UserRetirementStatus)
+def remove_pending_retirement_request(sender, instance, **kwargs):   # pylint: disable=unused-argument
+    """
+    Whenever a UserRetirementStatus record is deleted, remove the user's UserRetirementRequest record
+    IFF the UserRetirementStatus record was still PENDING.
+    """
+    pending_state = RetirementState.objects.filter(state_name='PENDING')[0]
+    if pending_state and instance.current_state == pending_state:
+        UserRetirementRequest.objects.filter(user=instance.user).delete()
